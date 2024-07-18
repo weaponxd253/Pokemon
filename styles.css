@@ -16,31 +16,31 @@ h1 {
     color: #333;
 }
 
-#random-cards-btn {
-    padding: 10px 20px;
+#controls {
     margin: 20px 0;
+}
+
+#controls select, #controls button {
+    padding: 10px;
+    margin-right: 10px;
     font-size: 1em;
-    background-color: #007bff;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
 }
 
-#random-cards-btn:hover {
-    background-color: #0056b3;
-}
-
-#battle {
+#selection {
     display: flex;
     justify-content: space-around;
     margin: 20px 0;
 }
 
-#battle .cards {
+#available-cards, #selected-cards {
+    width: 45%;
+}
+
+.cards {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
+    gap: 10px;
 }
 
 .card {
@@ -50,14 +50,19 @@ h1 {
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
     margin: 10px;
     padding: 10px;
-    width: 200px;
-    transform: scale(1);
-    transition: transform 0.3s ease;
+    width: 180px;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    cursor: pointer;
+    position: relative;
 }
 
 .card:hover {
     transform: scale(1.05);
     box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+}
+
+.card.selected {
+    border: 2px solid #007bff;
 }
 
 .card img {
@@ -73,6 +78,22 @@ h1 {
 .card p {
     color: #777;
     font-size: 0.9em;
+}
+
+.card button {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background-color: #ff4444;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    display: none;
+}
+
+.card.selected button {
+    display: block;
 }
 
 #result {
