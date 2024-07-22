@@ -3,42 +3,48 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pokémon TCG Battle</title>
+    <title>Pokémon Card Gallery</title>
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.9.1/gsap.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/dist/tippy.css">
 </head>
 <body>
     <div id="container">
-        <h1>Pokémon TCG Battle</h1>
-        <div id="controls">
-            <select id="set-select">
-                <option value="">Select a Set</option>
-            </select>
-            <button id="fetch-set-cards-btn">Fetch Cards from Set</button>
-            <button id="start-battle-btn" disabled>Start Battle</button>
+        <h1>Pokémon Card Gallery</h1>
+        <label class="switch">
+            <input type="checkbox" id="theme-toggle">
+            <span class="slider round"></span>
+        </label>
+        <input type="text" id="search" placeholder="Search for cards...">
+        <select id="sort">
+            <option value="name">Sort by Name</option>
+            <option value="hp">Sort by HP</option>
+            <option value="rarity">Sort by Rarity</option>
+        </select>
+        <select id="type-filter">
+            <option value="">Filter by Type</option>
+        </select>
+        <select id="set-filter">
+            <option value="">Filter by Set</option>
+        </select>
+        <div id="gallery" class="grid-container"></div>
+        <div id="pagination" class="pagination">
+            <button id="prev-page" class="pagination-btn">Previous</button>
+            <span id="page-info"></span>
+            <button id="next-page" class="pagination-btn">Next</button>
         </div>
-        <div id="selection">
-            <div id="available-cards">
-                <h2>Available Cards</h2>
-                <div class="cards"></div>
-            </div>
-            <div id="selected-cards">
-                <h2>Selected Cards (Choose 6)</h2>
-                <div class="cards"></div>
-            </div>
-        </div>
-        <div id="battle">
-            <div id="user-cards">
-                <h2>User's Cards</h2>
-                <div class="cards"></div>
-            </div>
-            <div id="cpu-cards">
-                <h2>CPU's Cards</h2>
-                <div class="cards"></div>
-            </div>
-        </div>
-        <div id="result"></div>
     </div>
+    
+    <!-- Modal Structure -->
+    <div id="card-modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <div id="modal-card-details"></div>
+        </div>
+    </div>
+    
+    <script src="https://unpkg.com/@popperjs/core@2"></script>
+    <script src="https://unpkg.com/tippy.js@6"></script>
     <script src="script.js"></script>
 </body>
 </html>

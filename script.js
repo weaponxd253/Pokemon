@@ -1,165 +1,203 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const setSelect = document.getElementById('set-select');
-    const fetchSetCardsBtn = document.getElementById('fetch-set-cards-btn');
-    const startBattleBtn = document.getElementById('start-battle-btn');
-    const availableCardsContainer = document.querySelector('#available-cards .cards');
-    const selectedCardsContainer = document.querySelector('#selected-cards .cards');
-    const userCardsContainer = document.querySelector('#user-cards .cards');
-    const cpuCardsContainer = document.querySelector('#cpu-cards .cards');
-    const resultContainer = document.getElementById('result');
-    let availableCards = [];
-    let selectedCards = [];
+    const galleryContainer = document.getElementById('gallery');
+    const searchInput = document.getElementById('search');
+    const sortSelect = document.getElementById('sort');
+    const typeFilter = document.getElementById('type-filter');
+    const setFilter = document.getElementById('set-filter');
+    const modal = document.getElementById('card-modal');
+    const modalContent = document.getElementById('modal-card-details');
+    const closeModal = document.querySelector('.close');
+    const prevPageBtn = document.getElementById('prev-page');
+    const nextPageBtn = document.getElementById('next-page');
+    const pageInfo = document.getElementById('page-info');
+    const themeToggle = document.getElementById('theme-toggle');
 
-    // Fetch available sets
-    fetch('https://api.pokemontcg.io/v2/sets', {
+    let allCards = [];
+    let filteredCards = [];
+    let allTypes = new Set();
+    let allSets = new Set();
+    let currentPage = 1;
+    const cardsPerPage = 20;
+
+    // Load saved theme preference
+    if (localStorage.getItem('theme') === 'dark') {
+        document.body.classList.add('dark-mode');
+        themeToggle.checked = true;
+    }
+
+    // Handle theme toggle
+    themeToggle.addEventListener('change', () => {
+        document.body.classList.toggle('dark-mode');
+        localStorage.setItem('theme', document.body.classList.contains('dark-mode') ? 'dark' : 'light');
+    });
+
+    fetch('https://api.pokemontcg.io/v2/cards?q=set.id:base1', { 
         headers: {
-            'X-Api-Key': 'c8190b2d-665c-4284-8772-f20a7ca88b2d' // Replace with your actual API key
+            'X-Api-Key': 'your_api_key_here' 
         }
     })
     .then(response => response.json())
     .then(data => {
-        data.data.forEach(set => {
-            const option = document.createElement('option');
-            option.value = set.id;
-            option.textContent = set.name;
-            setSelect.appendChild(option);
+        allCards = data.data;
+        allCards.forEach(card => {
+            if (card.types) {
+                card.types.forEach(type => allTypes.add(type));
+            }
+            allSets.add(card.set.name);
         });
+
+        populateFilterDropdowns();
+        filterAndSortCards();
     })
     .catch(error => {
-        console.error('Error fetching sets:', error);
+        console.error('Error fetching cards:', error);
     });
 
-    fetchSetCardsBtn.addEventListener('click', () => {
-        const selectedSet = setSelect.value;
-        if (selectedSet) {
-            fetch(`https://api.pokemontcg.io/v2/cards?q=set.id:${selectedSet}`, {
-                headers: {
-                    'X-Api-Key': 'your_api_key_here' // Replace with your actual API key
-                }
-            })
-            .then(response => response.json())
-            .then(data => {
-                availableCards = data.data;
-                displayAvailableCards(availableCards);
-            })
-            .catch(error => {
-                console.error('Error fetching cards:', error);
-            });
+    searchInput.addEventListener('input', filterAndSortCards);
+    sortSelect.addEventListener('change', filterAndSortCards);
+    typeFilter.addEventListener('change', filterAndSortCards);
+    setFilter.addEventListener('change', filterAndSortCards);
+    prevPageBtn.addEventListener('click', () => changePage(-1));
+    nextPageBtn.addEventListener('click', () => changePage(1));
+
+    closeModal.addEventListener('click', () => {
+        gsap.to(modalContent, { scale: 0.9, opacity: 0, duration: 0.3, onComplete: () => {
+            modal.style.display = 'none';
+            modal.classList.remove('show');
+        }});
+    });
+
+    window.addEventListener('click', (event) => {
+        if (event.target === modal) {
+            gsap.to(modalContent, { scale: 0.9, opacity: 0, duration: 0.3, onComplete: () => {
+                modal.style.display = 'none';
+                modal.classList.remove('show');
+            }});
         }
     });
 
-    startBattleBtn.addEventListener('click', () => {
-        console.log('Start Battle button clicked');
-        if (selectedCards.length === 6) {
-            console.log('Selected cards for battle:', selectedCards);
-            const cpuCards = getRandomCards(availableCards, 6);
-            console.log('CPU cards for battle:', cpuCards);
-            displayBattleCards(selectedCards, userCardsContainer);
-            displayBattleCards(cpuCards, cpuCardsContainer);
-            const result = determineBattleResult(selectedCards, cpuCards);
-            console.log('Battle result:', result);
-            displayBattleResult(result);
-        } else {
-            console.log('Selected cards count:', selectedCards.length);
+    function populateFilterDropdowns() {
+        allTypes.forEach(type => {
+            const option = document.createElement('option');
+            option.value = type;
+            option.textContent = type;
+            typeFilter.appendChild(option);
+        });
+
+        allSets.forEach(set => {
+            const option = document.createElement('option');
+            option.value = set;
+            option.textContent = set;
+            setFilter.appendChild(option);
+        });
+
+        gsap.fromTo([typeFilter, setFilter], { opacity: 0, y: -20 }, { opacity: 1, y: 0, duration: 0.5, stagger: 0.1 });
+    }
+
+    function filterAndSortCards() {
+        const query = searchInput.value.toLowerCase();
+        const sortCriteria = sortSelect.value;
+        const selectedType = typeFilter.value;
+        const selectedSet = setFilter.value;
+
+        filteredCards = allCards.filter(card => {
+            return (
+                (card.name.toLowerCase().includes(query) ||
+                (card.rarity && card.rarity.toLowerCase().includes(query)) ||
+                (card.hp && card.hp.toString().includes(query)) ||
+                (card.attacks && card.attacks.some(attack => attack.name.toLowerCase().includes(query)))) &&
+                (selectedType === "" || (card.types && card.types.includes(selectedType))) &&
+                (selectedSet === "" || card.set.name === selectedSet)
+            );
+        });
+
+        if (sortCriteria === 'name') {
+            filteredCards.sort((a, b) => a.name.localeCompare(b.name));
+        } else if (sortCriteria === 'hp') {
+            filteredCards.sort((a, b) => (b.hp || 0) - (a.hp || 0));
+        } else if (sortCriteria === 'rarity') {
+            const rarityOrder = ['Common', 'Uncommon', 'Rare', 'Ultra Rare', 'Secret Rare'];
+            filteredCards.sort((a, b) => {
+                const rarityA = rarityOrder.indexOf(a.rarity);
+                const rarityB = rarityOrder.indexOf(b.rarity);
+                return rarityA - rarityB;
+            });
         }
-    });
 
-    function getRandomCards(cards, count) {
-        const shuffled = [...cards].sort(() => 0.5 - Math.random());
-        return shuffled.slice(0, count);
+        currentPage = 1;
+        updatePagination();
+        gsap.fromTo(galleryContainer, { opacity: 0 }, { opacity: 1, duration: 0.5 });
+        displayCards(getCurrentPageCards(), galleryContainer);
     }
 
-    function displayAvailableCards(cards) {
-        availableCardsContainer.innerHTML = '';
-        cards.forEach((card) => {
-            const cardElement = document.createElement('div');
-            cardElement.classList.add('card');
-            cardElement.innerHTML = `
-                <img src="${card.images.small}" alt="${card.name}">
-                <h3>${card.name}</h3>
-                <p>Set: ${card.set.name}</p>
-                <p>HP: ${card.hp || 'N/A'}</p>
-                <p>Rarity: ${card.rarity || 'N/A'}</p>
-                <p>Retreat Cost: ${card.convertedRetreatCost || 'N/A'}</p>
-                <p>Attack Damage: ${getAttackDamage(card)}</p>
-                <p>Number of Attacks: ${card.attacks ? card.attacks.length : 0}</p>
-                <p>Abilities: ${card.abilities ? card.abilities.map(ability => ability.name).join(', ') : 'None'}</p>
-            `;
-            cardElement.addEventListener('click', () => {
-                if (selectedCards.length < 6 && !selectedCards.includes(card)) {
-                    selectedCards.push(card);
-                    cardElement.classList.add('selected');
-                    displaySelectedCards(selectedCards);
-                    if (selectedCards.length === 6) {
-                        startBattleBtn.disabled = false;
-                        console.log('Start Battle button enabled');
-                    }
-                } else if (cardElement.classList.contains('selected')) {
-                    selectedCards = selectedCards.filter(c => c.id !== card.id);
-                    cardElement.classList.remove('selected');
-                    displaySelectedCards(selectedCards);
-                    startBattleBtn.disabled = true;
-                    console.log('Start Battle button disabled');
-                }
-            });
-            availableCardsContainer.appendChild(cardElement);
-        });
+    function updatePagination() {
+        const totalPages = Math.ceil(filteredCards.length / cardsPerPage);
+        pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
+        prevPageBtn.disabled = currentPage === 1;
+        nextPageBtn.disabled = currentPage === totalPages;
+        gsap.fromTo([prevPageBtn, nextPageBtn], { opacity: 0, y: -20 }, { opacity: 1, y: 0, duration: 0.5, stagger: 0.1 });
     }
 
-    function displaySelectedCards(cards) {
-        selectedCardsContainer.innerHTML = '';
-        cards.forEach((card) => {
-            const cardElement = document.createElement('div');
-            cardElement.classList.add('card', 'selected');
-            cardElement.innerHTML = `
-                <img src="${card.images.small}" alt="${card.name}">
-                <h3>${card.name}</h3>
-                <p>Set: ${card.set.name}</p>
-                <p>HP: ${card.hp || 'N/A'}</p>
-                <p>Rarity: ${card.rarity || 'N/A'}</p>
-                <p>Retreat Cost: ${card.convertedRetreatCost || 'N/A'}</p>
-                <p>Attack Damage: ${getAttackDamage(card)}</p>
-                <p>Number of Attacks: ${card.attacks ? card.attacks.length : 0}</p>
-                <p>Abilities: ${card.abilities ? card.abilities.map(ability => ability.name).join(', ') : 'None'}</p>
-                <button class="remove-card-btn">Remove</button>
-            `;
-            cardElement.querySelector('.remove-card-btn').addEventListener('click', () => {
-                selectedCards = selectedCards.filter(c => c.id !== card.id);
-                displaySelectedCards(selectedCards);
-                displayAvailableCards(availableCards);
-                startBattleBtn.disabled = true;
-                console.log('Start Battle button disabled');
-            });
-            selectedCardsContainer.appendChild(cardElement);
-        });
+    function changePage(amount) {
+        const totalPages = Math.ceil(filteredCards.length / cardsPerPage);
+        currentPage = Math.min(Math.max(currentPage + amount, 1), totalPages);
+        displayCards(getCurrentPageCards(), galleryContainer);
+        updatePagination();
     }
 
-    function displayBattleCards(cards, container) {
+    function getCurrentPageCards() {
+        const startIndex = (currentPage - 1) * cardsPerPage;
+        const endIndex = startIndex + cardsPerPage;
+        return filteredCards.slice(startIndex, endIndex);
+    }
+
+    function displayCards(cards, container) {
         container.innerHTML = '';
-        cards.forEach((card, index) => {
+        cards.forEach((card) => {
             const cardElement = document.createElement('div');
             cardElement.classList.add('card');
             cardElement.innerHTML = `
                 <img src="${card.images.small}" alt="${card.name}">
                 <h3>${card.name}</h3>
-                <p>Set: ${card.set.name}</p>
                 <p>HP: ${card.hp || 'N/A'}</p>
                 <p>Rarity: ${card.rarity || 'N/A'}</p>
-                <p>Retreat Cost: ${card.convertedRetreatCost || 'N/A'}</p>
                 <p>Attack Damage: ${getAttackDamage(card)}</p>
-                <p>Number of Attacks: ${card.attacks ? card.attacks.length : 0}</p>
-                <p>Abilities: ${card.abilities ? card.abilities.map(ability => ability.name).join(', ') : 'None'}</p>
             `;
+            cardElement.addEventListener('click', () => showCardDetails(card));
             container.appendChild(cardElement);
-
-            // Apply GSAP animation
-            gsap.from(cardElement, {
-                duration: 1,
-                opacity: 0,
-                y: 20,
-                delay: index * 0.1
+            
+            tippy(cardElement, {
+                content: `
+                    <strong>${card.name}</strong><br>
+                    <em>HP:</em> ${card.hp || 'N/A'}<br>
+                    <em>Rarity:</em> ${card.rarity || 'N/A'}<br>
+                    <em>Set:</em> ${card.set.name}
+                `,
+                allowHTML: true,
             });
+
+            gsap.fromTo(cardElement, { scale: 0.9 }, { scale: 1, duration: 0.3 });
         });
+
+        gsap.fromTo('.card', { opacity: 0, y: 20 }, { opacity: 1, y: 0, stagger: 0.1, duration: 0.5 });
+    }
+
+    function showCardDetails(card) {
+        modalContent.innerHTML = `
+            <img src="${card.images.large}" alt="${card.name}" style="width: 100%;">
+            <h2>${card.name}</h2>
+            <p><strong>HP:</strong> ${card.hp || 'N/A'}</p>
+            <p><strong>Rarity:</strong> ${card.rarity || 'N/A'}</p>
+            <p><strong>Attack Damage:</strong> ${getAttackDamage(card)}</p>
+            <p><strong>Type:</strong> ${card.types ? card.types.join(', ') : 'N/A'}</p>
+            <p><strong>Set:</strong> ${card.set.name}</p>
+            <p><strong>Artist:</strong> ${card.artist}</p>
+            <p><strong>Flavor Text:</strong> ${card.flavorText || 'N/A'}</p>
+            <p><strong>Abilities:</strong> ${card.abilities ? card.abilities.map(a => a.name).join(', ') : 'N/A'}</p>
+        `;
+        modal.style.display = 'block';
+        modal.classList.add('show');
+        gsap.fromTo(modalContent, { scale: 0.9, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.3 });
     }
 
     function getAttackDamage(card) {
@@ -167,64 +205,33 @@ document.addEventListener('DOMContentLoaded', () => {
         return card.attacks.reduce((total, attack) => total + (attack.damage ? parseInt(attack.damage) : 0), 0);
     }
 
-    function determineBattleResult(userCards, cpuCards) {
-        let userWins = 0;
-        let cpuWins = 0;
+    let achievements = {
+        firstSearch: false,
+        firstSort: false,
+        firstFilter: false,
+    };
 
-        for (let i = 0; i < userCards.length; i++) {
-            const userCard = userCards[i];
-            const cpuCard = cpuCards[i];
-
-            const userScore = getCardScore(userCard);
-            const cpuScore = getCardScore(cpuCard);
-
-            if (userScore > cpuScore) {
-                userWins++;
-            } else if (cpuScore > userScore) {
-                cpuWins++;
-            }
+    searchInput.addEventListener('input', () => {
+        if (!achievements.firstSearch) {
+            alert('Achievement unlocked: First Search!');
+            achievements.firstSearch = true;
         }
+        filterAndSortCards();
+    });
 
-        return {
-            userWins,
-            cpuWins
-        };
-    }
-
-    function getCardScore(card) {
-        const hp = parseInt(card.hp) || 0;
-        const attackDamage = getAttackDamage(card) || 0;
-        const retreatCost = card.convertedRetreatCost || 0;
-        const rarityScore = getRarityScore(card.rarity) || 0;
-        const numberOfAttacks = card.attacks ? card.attacks.length : 0;
-        const abilityScore = card.abilities ? card.abilities.length * 2 : 0; // Giving a higher score for abilities
-        
-        return hp + attackDamage - retreatCost + rarityScore + numberOfAttacks + abilityScore;
-    }
-
-    function getRarityScore(rarity) {
-        const rarityScores = {
-            "Common": 1,
-            "Uncommon": 2,
-            "Rare": 3,
-            "Ultra Rare": 4,
-            "Secret Rare": 5
-        };
-        return rarityScores[rarity] || 0;
-    }
-
-    function displayBattleResult(result) {
-        resultContainer.innerHTML = `
-            <p>User Wins: ${result.userWins}</p>
-            <p>CPU Wins: ${result.cpuWins}</p>
-        `;
-        
-        if (result.userWins > result.cpuWins) {
-            resultContainer.innerHTML += `<p>Result: User Wins the Battle!</p>`;
-        } else if (result.cpuWins > result.userWins) {
-            resultContainer.innerHTML += `<p>Result: CPU Wins the Battle!</p>`;
-        } else {
-            resultContainer.innerHTML += `<p>Result: It's a Tie!</p>`;
+    sortSelect.addEventListener('change', () => {
+        if (!achievements.firstSort) {
+            alert('Achievement unlocked: First Sort!');
+            achievements.firstSort = true;
         }
-    }
+        filterAndSortCards();
+    });
+
+    typeFilter.addEventListener('change', () => {
+        if (!achievements.firstFilter) {
+            alert('Achievement unlocked: First Filter!');
+            achievements.firstFilter = true;
+        }
+        filterAndSortCards();
+    });
 });
