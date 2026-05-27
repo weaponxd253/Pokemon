@@ -683,3 +683,104 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 }
 
 .mini-chip.prev-gen { opacity: 0.65; }
+
+/* ═══════════════════════════════════════
+   MOBILE RESPONSIVE  (≤ 640px)
+   ═══════════════════════════════════════ */
+@media (max-width: 640px) {
+
+  /* ── Setup ── */
+  .setup-card { padding: 24px 18px; }
+
+  .team-names-grid { grid-template-columns: 1fr; }
+
+  /* ── Draft header ── */
+  .draft-header { padding: 8px 12px; gap: 8px; }
+  .dh-brand { display: none; }          /* hide "DRAFT LEAGUE" wordmark */
+  .dh-picker { font-size: 9px; }
+  .dh-sub { font-size: 9px; letter-spacing: 1px; margin-top: 3px; }
+  .dh-right { font-size: 11px; }
+
+  /* ── Snake bar ── */
+  .snake-bar { padding: 6px 10px; gap: 3px; }
+  .s-pip { width: 20px; height: 20px; font-size: 8px; }
+
+  /* ── Draft body: stack panels, add tab switcher ── */
+  .draft-body { flex-direction: column; position: relative; }
+
+  .pokemon-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    display: none;          /* hidden by default; JS toggles via .active */
+  }
+  .pokemon-panel.active { display: flex; flex: 1; }
+
+  .teams-panel {
+    width: 100%;
+    display: none;
+    flex-direction: column;
+  }
+  .teams-panel.active { display: flex; flex: 1; }
+
+  /* ── Tab bar (injected by JS) ── */
+  .mobile-tabs {
+    display: flex; flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .mobile-tab {
+    flex: 1; padding: 10px 8px;
+    font-family: 'Press Start 2P', monospace; font-size: 7px;
+    color: var(--muted); background: none; border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer; letter-spacing: 0.5px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  .mobile-tab.active {
+    color: var(--yellow);
+    border-bottom-color: var(--yellow);
+  }
+
+  /* ── Pokemon grid – smaller cards ── */
+  .poke-grid {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 8px; padding: 10px;
+  }
+
+  .poke-card { padding: 10px 6px 8px; }
+  .poke-card img { width: 52px; height: 52px; }
+  .pc-name { font-size: 11px; }
+
+  /* ── Toolbar – wrap filters below search ── */
+  .panel-toolbar { flex-wrap: wrap; gap: 6px; padding: 8px 10px; }
+  .tb-search { min-width: 0; flex-basis: 100%; }
+  .tb-select { flex: 1; font-size: 13px; padding: 7px 8px; }
+
+  /* ── Teams panel on mobile ── */
+  .tp-list { padding: 8px; gap: 6px; }
+  .tt-picks { min-height: 28px; }
+
+  /* ── Lobby ── */
+  #lobbyScreen { padding: 28px 14px; }
+  .lobby-standings-grid { grid-template-columns: 1fr; }
+  .lobby-order-pills { gap: 6px; }
+
+  /* ── Complete ── */
+  #completeScreen { padding: 28px 14px; }
+  .comp-grid { grid-template-columns: 1fr; gap: 14px; }
+  .comp-title { font-size: 13px; }
+
+  /* ── Resume card ── */
+  .resume-card { padding: 22px 16px; }
+  .resume-team-name { min-width: 80px; font-size: 12px; }
+
+  /* ── Bigger tap targets for buttons ── */
+  .btn-primary, .btn-resume { padding: 18px; font-size: 11px; }
+  .btn-continue-gen { padding: 18px 28px; }
+  .cpu-toggle { padding: 8px 10px; min-width: 44px; min-height: 36px; }
+}
+
+/* ── Tab bar hidden on desktop ── */
+.mobile-tabs { display: none; }
