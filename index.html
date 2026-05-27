@@ -8,6 +8,26 @@
 </head>
 <body>
 
+<!-- ══════════════ RESUME ══════════════ -->
+<div id="resumeScreen">
+  <div class="resume-logo">POKÉMON<br>DRAFT LEAGUE</div>
+  <div class="resume-tagline">Season in progress</div>
+  <div class="resume-card">
+    <div class="resume-card-header">
+      <div class="resume-gen-badge" id="resumeGenBadge"></div>
+      <div class="resume-meta">
+        <div class="resume-meta-title" id="resumeMetaTitle"></div>
+        <div class="resume-meta-sub" id="resumeMetaSub"></div>
+      </div>
+    </div>
+    <div class="resume-teams" id="resumeTeams"></div>
+    <div class="resume-actions">
+      <button class="btn-resume" onclick="resumeDraft()">▶ &nbsp;Resume Season</button>
+      <button class="btn-new-season" onclick="discardAndNew()">↺ &nbsp;Start New Season</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══════════════ SETUP ══════════════ -->
 <div id="setupScreen">
   <div class="logo">POKÉMON<br>DRAFT LEAGUE</div>
