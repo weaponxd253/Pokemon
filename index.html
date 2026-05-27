@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>Pokémon Draft League</title>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="pokemon-draft-league.css">
 </head>
 <body>
 
@@ -21,7 +21,7 @@
       </div>
     </div>
     <div class="form-group">
-      <label class="form-label">Team Names</label>
+      <label class="form-label">Team Names &amp; Type</label>
       <div class="team-names-grid" id="teamNamesGrid"></div>
     </div>
     <div class="form-group">
@@ -32,12 +32,12 @@
       </div>
     </div>
     <div class="form-group">
-      <label class="form-label">Pokémon Pool</label>
+      <label class="form-label">Starting Generation</label>
       <select id="genSelect">
-        <option value="151">Gen 1 — Kanto (151 Pokémon)</option>
-        <option value="251">Gen 1–2 — + Johto (251 Pokémon)</option>
-        <option value="386">Gen 1–3 — + Hoenn (386 Pokémon)</option>
-        <option value="493">Gen 1–4 — + Sinnoh (493 Pokémon)</option>
+        <option value="0">Gen 1 — Kanto (start here)</option>
+        <option value="1">Gen 2 — Johto (start here)</option>
+        <option value="2">Gen 3 — Hoenn (start here)</option>
+        <option value="3">Gen 4 — Sinnoh (start here)</option>
       </select>
     </div>
     <button class="btn-primary" onclick="startDraft()">▶ &nbsp;START DRAFT</button>
@@ -46,7 +46,7 @@
 
 <!-- ══════════════ LOADING ══════════════ -->
 <div id="loadingScreen">
-  <div class="load-label">LOADING POKÉDEX</div>
+  <div class="load-label" id="loadLabel">LOADING POKÉDEX</div>
   <div class="progress-track">
     <div class="progress-fill" id="progressFill"></div>
   </div>
@@ -91,16 +91,38 @@
   </div>
 </div>
 
-<!-- ══════════════ COMPLETE ══════════════ -->
-<div id="completeScreen">
-  <div class="comp-title">DRAFT COMPLETE!</div>
-  <div class="comp-sub">Power Rankings by Total Base Stat</div>
-  <div class="comp-grid" id="compGrid"></div>
-  <button class="btn-restart" onclick="restart()">↺ &nbsp;NEW DRAFT</button>
+<!-- ══════════════ LOBBY ══════════════ -->
+<div id="lobbyScreen">
+  <div class="lobby-header-row">
+    <div class="lobby-gen-complete" id="lobbyGenComplete">Gen Complete</div>
+    <div class="lobby-draft-label" id="lobbyDraftNum">Draft 1 · Season continues</div>
+  </div>
+
+  <div class="lobby-section">
+    <div class="lobby-section-lbl">Next Draft Order &nbsp;·&nbsp; worst BST picks first</div>
+    <div class="lobby-order-pills" id="lobbyOrderPills"></div>
+  </div>
+
+  <div class="lobby-section">
+    <div class="lobby-section-lbl">Standings</div>
+    <div class="lobby-standings-grid" id="lobbyStandings"></div>
+  </div>
+
+  <div class="lobby-actions">
+    <button class="btn-continue-gen" id="btnContinue" onclick="continueToNextGen()">Continue →</button>
+    <button class="btn-end-season" onclick="endSeason()">End Season</button>
+  </div>
 </div>
 
-<!-- storage.js MUST come before pokemon-draft-league.js -->
+<!-- ══════════════ COMPLETE ══════════════ -->
+<div id="completeScreen">
+  <div class="comp-title">SEASON COMPLETE!</div>
+  <div class="comp-sub">Final Power Rankings by Total Base Stat</div>
+  <div class="comp-grid" id="compGrid"></div>
+  <button class="btn-restart" onclick="restart()">↺ &nbsp;NEW SEASON</button>
+</div>
+
 <script src="storage.js"></script>
-<script src="script.js"></script>
+<script src="pokemon-draft-league.js"></script>
 </body>
 </html>
