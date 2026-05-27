@@ -25,6 +25,7 @@ let currentRound = 0, currentPickInRound = 0;
 let draftedIds = new Set();
 let snakeOrder = [];
 let curSort = 'bst-desc', curSearch = '', curType = '';
+let cpuThinking = false;
 
 // ── Setup ──
 function updateTeamCount(val) {
@@ -41,20 +42,38 @@ function updateRounds(val) {
 function renderNameInputs() {
   const grid = document.getElementById('teamNamesGrid');
   const existing = [...grid.querySelectorAll('.team-name-field')].map(i => i.value);
+  const existingCpu = [...grid.querySelectorAll('.cpu-toggle')].map(b => b.dataset.cpu === 'true');
   grid.innerHTML = '';
   for (let i = 0; i < numTeams; i++) {
     const row = document.createElement('div');
     row.className = 'team-name-row';
+
     const dot = document.createElement('div');
     dot.className = 'team-dot';
     dot.style.background = TEAM_COLORS[i];
+
     const inp = document.createElement('input');
     inp.type = 'text';
     inp.className = 'team-name-field';
     inp.value = existing[i] !== undefined ? existing[i] : DEFAULT_NAMES[i];
     inp.placeholder = `Team ${i + 1}`;
+
+    const cpuBtn = document.createElement('button');
+    cpuBtn.type = 'button';
+    cpuBtn.className = 'cpu-toggle';
+    cpuBtn.textContent = 'CPU';
+    const isCpu = existingCpu[i] ?? false;
+    cpuBtn.dataset.cpu = String(isCpu);
+    if (isCpu) cpuBtn.classList.add('active');
+    cpuBtn.addEventListener('click', () => {
+      const nowCpu = cpuBtn.dataset.cpu !== 'true';
+      cpuBtn.dataset.cpu = String(nowCpu);
+      cpuBtn.classList.toggle('active', nowCpu);
+    });
+
     row.appendChild(dot);
     row.appendChild(inp);
+    row.appendChild(cpuBtn);
     grid.appendChild(row);
   }
 }
@@ -65,9 +84,11 @@ async function startDraft() {
   const limit = parseInt(document.getElementById('genSelect').value);
 
   const nameFields = document.querySelectorAll('.team-name-field');
+  const cpuToggles = document.querySelectorAll('.cpu-toggle');
   teams = Array.from({ length: numTeams }, (_, i) => ({
     name: nameFields[i]?.value.trim() || `Team ${i + 1}`,
     color: TEAM_COLORS[i],
+    isCpu: cpuToggles[i]?.dataset.cpu === 'true',
     picks: []
   }));
 
@@ -87,6 +108,9 @@ async function startDraft() {
   refreshSnakeBar();
   refreshGrid();
   refreshTeams();
+
+  // Kick off CPU if first pick belongs to a CPU team
+  triggerCpuIfNeeded();
 }
 
 // ── Data Loading ──
@@ -167,6 +191,58 @@ function buildSnakeOrder() {
 function currentPickNum() { return currentRound * numTeams + currentPickInRound; }
 function currentTeamIdx() { return snakeOrder[currentPickNum()]; }
 
+// ── CPU Logic ──
+function cpuScore(poke, team) {
+  const typesOwned = new Set(team.picks.flatMap(p => p.types));
+  // Reward picking a type the team doesn't have yet
+  const newTypeBonus = poke.types.some(t => !typesOwned.has(t)) ? 55 : 0;
+  // Random jitter of ±40 BST so it's not perfectly deterministic
+  const jitter = (Math.random() - 0.5) * 80;
+  return poke.bst + newTypeBonus + jitter;
+}
+
+function cpuPick() {
+  const ti = currentTeamIdx();
+  const team = teams[ti];
+  const available = allPokemon.filter(p => !draftedIds.has(p.id));
+  if (!available.length) return;
+
+  // Score every available Pokémon and sort descending
+  const scored = available
+    .map(p => ({ poke: p, score: cpuScore(p, team) }))
+    .sort((a, b) => b.score - a.score);
+
+  // Pick randomly from the top 3 candidates for extra variance
+  const topN = Math.min(3, scored.length);
+  const choice = scored[Math.floor(Math.random() * topN)].poke;
+
+  setCpuThinking(false);
+  draftPokemon(choice);
+}
+
+function setCpuThinking(on) {
+  cpuThinking = on;
+  const picker = document.getElementById('dhPicker');
+  const sub = document.getElementById('dhSub');
+  if (on) {
+    picker.classList.add('thinking');
+    sub.textContent = 'CPU is thinking...';
+  } else {
+    picker.classList.remove('thinking');
+  }
+}
+
+function triggerCpuIfNeeded() {
+  if (currentRound >= numRounds) return;
+  const ti = currentTeamIdx();
+  if (!teams[ti].isCpu) return;
+
+  setCpuThinking(true);
+  // Delay between 800ms and 1600ms for natural feel
+  const delay = 800 + Math.random() * 800;
+  setTimeout(cpuPick, delay);
+}
+
 // ── Rendering ──
 function populateTypeFilter() {
   const types = new Set();
@@ -181,11 +257,12 @@ function populateTypeFilter() {
 }
 
 function refreshHeader() {
+  if (cpuThinking) return; // don't overwrite the thinking state mid-animation
   const total = numRounds * numTeams;
   const pick = currentPickNum();
   const team = teams[currentTeamIdx()];
   const picker = document.getElementById('dhPicker');
-  picker.textContent = team.name + "'s Pick";
+  picker.textContent = team.name + (team.isCpu ? ' (CPU)' : '') + "'s Pick";
   picker.style.color = team.color;
   document.getElementById('dhSub').textContent =
     `Round ${currentRound + 1}  ·  Pick ${currentPickInRound + 1} of ${numTeams}`;
@@ -207,7 +284,7 @@ function refreshSnakeBar() {
     const pip = document.createElement('div');
     pip.className = 's-pip ' + (i < cur ? 'done' : i === cur ? 'current' : 'upcoming');
     pip.style.background = teams[ti].color;
-    pip.title = teams[ti].name;
+    pip.title = teams[ti].name + (teams[ti].isCpu ? ' (CPU)' : '');
     pip.textContent = ti + 1;
     bar.appendChild(pip);
   });
@@ -259,7 +336,10 @@ function refreshGrid() {
       <div class="pc-bst">${poke.bst}</div>
     `;
     if (!draftedIds.has(poke.id)) {
-      card.addEventListener('click', () => draftPokemon(poke));
+      card.addEventListener('click', () => {
+        if (cpuThinking) return; // block human clicks during CPU turn
+        draftPokemon(poke);
+      });
     }
     grid.appendChild(card);
   });
@@ -279,10 +359,14 @@ function refreshTeams() {
             <span>${p.name}</span>
           </div>`).join('')
       : '<span class="tt-empty">No picks yet</span>';
+    const cpuBadge = team.isCpu
+      ? '<span class="tt-cpu-badge">CPU</span>'
+      : '';
     tile.innerHTML = `
       <div class="tt-head">
         <div class="tt-dot" style="background:${team.color}"></div>
         <div class="tt-name">${team.name}</div>
+        ${cpuBadge}
         <div class="tt-count">${team.picks.length}/${numRounds}</div>
       </div>
       <div class="tt-picks">${picks}</div>
@@ -315,6 +399,7 @@ function draftPokemon(poke) {
   refreshSnakeBar();
   refreshTeams();
   saveSeason(buildSeasonState());
+  triggerCpuIfNeeded();
 }
 
 function buildSeasonState() {
@@ -353,6 +438,7 @@ function showComplete() {
 
   ranked.forEach((team, rank) => {
     const totalBst = team.picks.reduce((s, p) => s + p.bst, 0);
+    const cpuLabel = team.isCpu ? ' <span style="font-size:10px;opacity:0.6">(CPU)</span>' : '';
     const picks = team.picks.map(p => `
       <div class="comp-pick">
         <img src="${p.sprite}" alt="${p.name}">
@@ -369,7 +455,7 @@ function showComplete() {
     el.innerHTML = `
       <div class="comp-team-head">
         <div style="width:13px;height:13px;border-radius:50%;background:${team.color};flex-shrink:0"></div>
-        ${MEDALS[rank] ? MEDALS[rank] + ' ' : ''}${team.name}
+        ${MEDALS[rank] ? MEDALS[rank] + ' ' : ''}${team.name}${cpuLabel}
         <div class="comp-bst-total">TOTAL ${totalBst}</div>
       </div>
       <div class="comp-picks">${picks}</div>
@@ -381,7 +467,7 @@ function showComplete() {
 // ── Restart ──
 function restart() {
   allPokemon = []; teams = []; draftedIds.clear(); snakeOrder = [];
-  currentRound = 0; currentPickInRound = 0;
+  currentRound = 0; currentPickInRound = 0; cpuThinking = false;
   curSort = 'bst-desc'; curSearch = ''; curType = '';
   document.getElementById('typeFilter').innerHTML = '<option value="">All Types</option>';
   document.getElementById('progressFill').style.width = '0%';
@@ -434,6 +520,7 @@ async function restoreSeason(saved) {
   refreshSnakeBar();
   refreshGrid();
   refreshTeams();
+  triggerCpuIfNeeded();
 }
 
 init();
