@@ -1,50 +1,103 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pokémon Card Gallery</title>
-    <link rel="stylesheet" href="styles.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.9.1/gsap.min.js"></script>
-    <link rel="stylesheet" href="https://unpkg.com/tippy.js@6/dist/tippy.css">
+  <meta charset="UTF-8">
+  <title>Pokémon Draft League</title>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="pokemon-draft-league.css">
 </head>
 <body>
-    <div id="container">
-        <h1>Pokémon Card Gallery</h1>
-        <label class="switch">
-            <input type="checkbox" id="theme-toggle">
-            <span class="slider round"></span>
-        </label>
-        <input type="text" id="search" placeholder="Search for cards...">
-        <select id="sort">
-            <option value="name">Sort by Name</option>
-            <option value="hp">Sort by HP</option>
-            <option value="rarity">Sort by Rarity</option>
-        </select>
-        <select id="type-filter">
-            <option value="">Filter by Type</option>
-        </select>
-        <select id="set-filter">
-            <option value="">Filter by Set</option>
-        </select>
-        <div id="gallery" class="grid-container"></div>
-        <div id="pagination" class="pagination">
-            <button id="prev-page" class="pagination-btn">Previous</button>
-            <span id="page-info"></span>
-            <button id="next-page" class="pagination-btn">Next</button>
-        </div>
+
+<!-- ══════════════ SETUP ══════════════ -->
+<div id="setupScreen">
+  <div class="logo">POKÉMON<br>DRAFT LEAGUE</div>
+  <div class="tagline">Snake Draft · Build Your Team · Rule the League</div>
+  <div class="setup-card">
+    <div class="form-group">
+      <label class="form-label">Number of Teams</label>
+      <div class="range-row">
+        <input type="range" id="numTeamsRange" min="2" max="8" value="4" oninput="updateTeamCount(this.value)">
+        <div class="range-val" id="numTeamsVal">4</div>
+      </div>
     </div>
-    
-    <!-- Modal Structure -->
-    <div id="card-modal" class="modal">
-        <div class="modal-content">
-            <span class="close">&times;</span>
-            <div id="modal-card-details"></div>
-        </div>
+    <div class="form-group">
+      <label class="form-label">Team Names</label>
+      <div class="team-names-grid" id="teamNamesGrid"></div>
     </div>
-    
-    <script src="https://unpkg.com/@popperjs/core@2"></script>
-    <script src="https://unpkg.com/tippy.js@6"></script>
-    <script src="script.js"></script>
+    <div class="form-group">
+      <label class="form-label">Rounds Per Team</label>
+      <div class="range-row">
+        <input type="range" id="numRoundsRange" min="1" max="8" value="4" oninput="updateRounds(this.value)">
+        <div class="range-val" id="numRoundsVal">4</div>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Pokémon Pool</label>
+      <select id="genSelect">
+        <option value="151">Gen 1 — Kanto (151 Pokémon)</option>
+        <option value="251">Gen 1–2 — + Johto (251 Pokémon)</option>
+        <option value="386">Gen 1–3 — + Hoenn (386 Pokémon)</option>
+        <option value="493">Gen 1–4 — + Sinnoh (493 Pokémon)</option>
+      </select>
+    </div>
+    <button class="btn-primary" onclick="startDraft()">▶ &nbsp;START DRAFT</button>
+  </div>
+</div>
+
+<!-- ══════════════ LOADING ══════════════ -->
+<div id="loadingScreen">
+  <div class="load-label">LOADING POKÉDEX</div>
+  <div class="progress-track">
+    <div class="progress-fill" id="progressFill"></div>
+  </div>
+  <div class="load-count" id="loadCount">0 / 0</div>
+  <div class="load-name" id="loadName"></div>
+</div>
+
+<!-- ══════════════ DRAFT ══════════════ -->
+<div id="draftScreen">
+  <div class="draft-header">
+    <div class="dh-brand">DRAFT<br>LEAGUE</div>
+    <div class="dh-center">
+      <div class="dh-picker" id="dhPicker">—</div>
+      <div class="dh-sub" id="dhSub">Round 1 · Pick 1</div>
+    </div>
+    <div class="dh-right" id="dhRight">— picks left</div>
+  </div>
+
+  <div class="snake-bar" id="snakeBar"></div>
+
+  <div class="draft-body">
+    <div class="pokemon-panel">
+      <div class="panel-toolbar">
+        <input class="tb-search" type="text" placeholder="Search by name or #…" oninput="filterSearch(this.value)">
+        <select class="tb-select" id="typeFilter" onchange="filterType(this.value)">
+          <option value="">All Types</option>
+        </select>
+        <select class="tb-select" onchange="sortBy(this.value)">
+          <option value="bst-desc">BST ↓</option>
+          <option value="bst-asc">BST ↑</option>
+          <option value="name">Name A–Z</option>
+          <option value="id">Pokédex #</option>
+        </select>
+      </div>
+      <div class="poke-grid" id="pokeGrid"></div>
+    </div>
+
+    <div class="teams-panel">
+      <div class="tp-header">ROSTERS</div>
+      <div class="tp-list" id="teamsList"></div>
+    </div>
+  </div>
+</div>
+
+<div id="completeScreen">
+  <div class="comp-title">DRAFT COMPLETE!</div>
+  <div class="comp-sub">Power Rankings by Total Base Stat</div>
+  <div class="comp-grid" id="compGrid"></div>
+  <button class="btn-restart" onclick="restart()">↺ &nbsp;NEW DRAFT</button>
+</div>
+
+<script src="pokemon-draft-league.js"></script>
 </body>
 </html>
