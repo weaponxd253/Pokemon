@@ -1,237 +1,356 @@
-document.addEventListener('DOMContentLoaded', () => {
-    const galleryContainer = document.getElementById('gallery');
-    const searchInput = document.getElementById('search');
-    const sortSelect = document.getElementById('sort');
-    const typeFilter = document.getElementById('type-filter');
-    const setFilter = document.getElementById('set-filter');
-    const modal = document.getElementById('card-modal');
-    const modalContent = document.getElementById('modal-card-details');
-    const closeModal = document.querySelector('.close');
-    const prevPageBtn = document.getElementById('prev-page');
-    const nextPageBtn = document.getElementById('next-page');
-    const pageInfo = document.getElementById('page-info');
-    const themeToggle = document.getElementById('theme-toggle');
+const TEAM_COLORS = [
+  '#ff3b3b', '#4da6ff', '#ffd700', '#4dff91',
+  '#ff7c4d', '#c97bff', '#ff9ec8', '#00e5d4'
+];
 
-    let allCards = [];
-    let filteredCards = [];
-    let allTypes = new Set();
-    let allSets = new Set();
-    let currentPage = 1;
-    const cardsPerPage = 20;
+const TYPE_COLORS = {
+  normal:   '#A8A8A8', fire:     '#F08030', water:    '#6890F0',
+  grass:    '#78C850', electric: '#F8D030', ice:      '#98D8D8',
+  fighting: '#C03028', poison:   '#A040A0', ground:   '#E0C068',
+  flying:   '#A890F0', psychic:  '#F85888', bug:      '#A8B820',
+  rock:     '#B8A038', ghost:    '#705898', dragon:   '#7038F8',
+  dark:     '#705848', steel:    '#B8B8D0', fairy:    '#EE99AC'
+};
 
-    // Load saved theme preference
-    if (localStorage.getItem('theme') === 'dark') {
-        document.body.classList.add('dark-mode');
-        themeToggle.checked = true;
+const DEFAULT_NAMES = [
+  'Red Bulls', 'Blue Jays', 'Gold Rush', 'Green Wave',
+  'Blaze Squad', 'Purple Haze', 'Pink Tide', 'Teal Force'
+];
+
+// ── State ──
+let allPokemon = [];
+let teams = [];
+let numTeams = 4, numRounds = 4;
+let currentRound = 0, currentPickInRound = 0;
+let draftedIds = new Set();
+let snakeOrder = [];
+let curSort = 'bst-desc', curSearch = '', curType = '';
+
+// ── Setup ──
+function updateTeamCount(val) {
+  numTeams = parseInt(val);
+  document.getElementById('numTeamsVal').textContent = val;
+  renderNameInputs();
+}
+
+function updateRounds(val) {
+  numRounds = parseInt(val);
+  document.getElementById('numRoundsVal').textContent = val;
+}
+
+function renderNameInputs() {
+  const grid = document.getElementById('teamNamesGrid');
+  const existing = [...grid.querySelectorAll('.team-name-field')].map(i => i.value);
+  grid.innerHTML = '';
+  for (let i = 0; i < numTeams; i++) {
+    const row = document.createElement('div');
+    row.className = 'team-name-row';
+    const dot = document.createElement('div');
+    dot.className = 'team-dot';
+    dot.style.background = TEAM_COLORS[i];
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.className = 'team-name-field';
+    inp.value = existing[i] !== undefined ? existing[i] : DEFAULT_NAMES[i];
+    inp.placeholder = `Team ${i + 1}`;
+    row.appendChild(dot);
+    row.appendChild(inp);
+    grid.appendChild(row);
+  }
+}
+
+async function startDraft() {
+  numTeams = parseInt(document.getElementById('numTeamsRange').value);
+  numRounds = parseInt(document.getElementById('numRoundsRange').value);
+  const limit = parseInt(document.getElementById('genSelect').value);
+
+  const nameFields = document.querySelectorAll('.team-name-field');
+  teams = Array.from({ length: numTeams }, (_, i) => ({
+    name: nameFields[i]?.value.trim() || `Team ${i + 1}`,
+    color: TEAM_COLORS[i],
+    picks: []
+  }));
+
+  document.getElementById('setupScreen').style.display = 'none';
+  const ls = document.getElementById('loadingScreen');
+  ls.style.display = 'flex';
+
+  await loadPokemonData(limit);
+  buildSnakeOrder();
+  populateTypeFilter();
+
+  ls.style.display = 'none';
+  const ds = document.getElementById('draftScreen');
+  ds.style.display = 'flex';
+
+  refreshHeader();
+  refreshSnakeBar();
+  refreshGrid();
+  refreshTeams();
+}
+
+// ── Data Loading ──
+async function loadPokemonData(limit) {
+  allPokemon = [];
+  let loaded = 0;
+  document.getElementById('loadCount').textContent = `0 / ${limit}`;
+
+  const BATCH = 60;
+  for (let i = 0; i < limit; i += BATCH) {
+    const ids = Array.from({ length: Math.min(BATCH, limit - i) }, (_, j) => i + j + 1);
+    const results = await Promise.all(ids.map(id =>
+      fetch(`https://pokeapi.co/api/v2/pokemon/${id}`)
+        .then(r => r.json())
+        .then(data => {
+          loaded++;
+          document.getElementById('progressFill').style.width = `${(loaded / limit) * 100}%`;
+          document.getElementById('loadCount').textContent = `${loaded} / ${limit}`;
+          document.getElementById('loadName').textContent = data.name;
+          return parsePokemon(data);
+        })
+    ));
+    allPokemon.push(...results);
+  }
+  allPokemon.sort((a, b) => b.bst - a.bst);
+}
+
+function parsePokemon(data) {
+  let bst = 0;
+  const stats = {};
+  for (const s of data.stats) {
+    stats[s.stat.name] = s.base_stat;
+    bst += s.base_stat;
+  }
+  return {
+    id: data.id,
+    name: data.name,
+    sprite: data.sprites.front_default ||
+      `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${data.id}.png`,
+    types: data.types.map(t => t.type.name),
+    stats,
+    bst
+  };
+}
+
+// ── Snake Logic ──
+function buildSnakeOrder() {
+  snakeOrder = [];
+  for (let r = 0; r < numRounds; r++) {
+    for (let p = 0; p < numTeams; p++) {
+      snakeOrder.push(r % 2 === 0 ? p : (numTeams - 1 - p));
     }
+  }
+}
 
-    // Handle theme toggle
-    themeToggle.addEventListener('change', () => {
-        document.body.classList.toggle('dark-mode');
-        localStorage.setItem('theme', document.body.classList.contains('dark-mode') ? 'dark' : 'light');
-    });
+function currentPickNum() { return currentRound * numTeams + currentPickInRound; }
+function currentTeamIdx() { return snakeOrder[currentPickNum()]; }
 
-    fetch('https://api.pokemontcg.io/v2/cards?q=set.id:base1', { 
-        headers: {
-            'X-Api-Key': 'your_api_key_here' 
-        }
-    })
-    .then(response => response.json())
-    .then(data => {
-        allCards = data.data;
-        allCards.forEach(card => {
-            if (card.types) {
-                card.types.forEach(type => allTypes.add(type));
-            }
-            allSets.add(card.set.name);
-        });
+// ── Rendering ──
+function populateTypeFilter() {
+  const types = new Set();
+  allPokemon.forEach(p => p.types.forEach(t => types.add(t)));
+  const sel = document.getElementById('typeFilter');
+  [...types].sort().forEach(t => {
+    const o = document.createElement('option');
+    o.value = t;
+    o.textContent = t[0].toUpperCase() + t.slice(1);
+    sel.appendChild(o);
+  });
+}
 
-        populateFilterDropdowns();
-        filterAndSortCards();
-    })
-    .catch(error => {
-        console.error('Error fetching cards:', error);
-    });
+function refreshHeader() {
+  const total = numRounds * numTeams;
+  const pick = currentPickNum();
+  const team = teams[currentTeamIdx()];
+  const picker = document.getElementById('dhPicker');
+  picker.textContent = team.name + "'s Pick";
+  picker.style.color = team.color;
+  document.getElementById('dhSub').textContent =
+    `Round ${currentRound + 1}  ·  Pick ${currentPickInRound + 1} of ${numTeams}`;
+  document.getElementById('dhRight').textContent =
+    `${total - pick} pick${total - pick !== 1 ? 's' : ''} remaining`;
+}
 
-    searchInput.addEventListener('input', filterAndSortCards);
-    sortSelect.addEventListener('change', filterAndSortCards);
-    typeFilter.addEventListener('change', filterAndSortCards);
-    setFilter.addEventListener('change', filterAndSortCards);
-    prevPageBtn.addEventListener('click', () => changePage(-1));
-    nextPageBtn.addEventListener('click', () => changePage(1));
-
-    closeModal.addEventListener('click', () => {
-        gsap.to(modalContent, { scale: 0.9, opacity: 0, duration: 0.3, onComplete: () => {
-            modal.style.display = 'none';
-            modal.classList.remove('show');
-        }});
-    });
-
-    window.addEventListener('click', (event) => {
-        if (event.target === modal) {
-            gsap.to(modalContent, { scale: 0.9, opacity: 0, duration: 0.3, onComplete: () => {
-                modal.style.display = 'none';
-                modal.classList.remove('show');
-            }});
-        }
-    });
-
-    function populateFilterDropdowns() {
-        allTypes.forEach(type => {
-            const option = document.createElement('option');
-            option.value = type;
-            option.textContent = type;
-            typeFilter.appendChild(option);
-        });
-
-        allSets.forEach(set => {
-            const option = document.createElement('option');
-            option.value = set;
-            option.textContent = set;
-            setFilter.appendChild(option);
-        });
-
-        gsap.fromTo([typeFilter, setFilter], { opacity: 0, y: -20 }, { opacity: 1, y: 0, duration: 0.5, stagger: 0.1 });
+function refreshSnakeBar() {
+  const bar = document.getElementById('snakeBar');
+  bar.innerHTML = '';
+  const cur = currentPickNum();
+  snakeOrder.forEach((ti, i) => {
+    if (i > 0 && i % numTeams === 0) {
+      const sep = document.createElement('div');
+      sep.className = 's-sep';
+      sep.textContent = '|';
+      bar.appendChild(sep);
     }
+    const pip = document.createElement('div');
+    pip.className = 's-pip ' + (i < cur ? 'done' : i === cur ? 'current' : 'upcoming');
+    pip.style.background = teams[ti].color;
+    pip.title = teams[ti].name;
+    pip.textContent = ti + 1;
+    bar.appendChild(pip);
+  });
+  bar.querySelector('.current')?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+}
 
-    function filterAndSortCards() {
-        const query = searchInput.value.toLowerCase();
-        const sortCriteria = sortSelect.value;
-        const selectedType = typeFilter.value;
-        const selectedSet = setFilter.value;
+function isLight(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 > 128;
+}
 
-        filteredCards = allCards.filter(card => {
-            return (
-                (card.name.toLowerCase().includes(query) ||
-                (card.rarity && card.rarity.toLowerCase().includes(query)) ||
-                (card.hp && card.hp.toString().includes(query)) ||
-                (card.attacks && card.attacks.some(attack => attack.name.toLowerCase().includes(query)))) &&
-                (selectedType === "" || (card.types && card.types.includes(selectedType))) &&
-                (selectedSet === "" || card.set.name === selectedSet)
-            );
-        });
+function typePills(types) {
+  return types.map(t => {
+    const bg = TYPE_COLORS[t] || '#888';
+    const fg = isLight(bg) ? '#000' : '#fff';
+    return `<span class="type-pill" style="background:${bg};color:${fg}">${t}</span>`;
+  }).join('');
+}
 
-        if (sortCriteria === 'name') {
-            filteredCards.sort((a, b) => a.name.localeCompare(b.name));
-        } else if (sortCriteria === 'hp') {
-            filteredCards.sort((a, b) => (b.hp || 0) - (a.hp || 0));
-        } else if (sortCriteria === 'rarity') {
-            const rarityOrder = ['Common', 'Uncommon', 'Rare', 'Ultra Rare', 'Secret Rare'];
-            filteredCards.sort((a, b) => {
-                const rarityA = rarityOrder.indexOf(a.rarity);
-                const rarityB = rarityOrder.indexOf(b.rarity);
-                return rarityA - rarityB;
-            });
-        }
+function getDisplayList() {
+  let list = [...allPokemon];
+  if (curSearch) {
+    const q = curSearch.toLowerCase();
+    list = list.filter(p => p.name.includes(q) || String(p.id).includes(q));
+  }
+  if (curType) list = list.filter(p => p.types.includes(curType));
+  if (curSort === 'bst-desc')     list.sort((a, b) => b.bst - a.bst);
+  else if (curSort === 'bst-asc') list.sort((a, b) => a.bst - b.bst);
+  else if (curSort === 'name')    list.sort((a, b) => a.name.localeCompare(b.name));
+  else                            list.sort((a, b) => a.id - b.id);
+  return list;
+}
 
-        currentPage = 1;
-        updatePagination();
-        gsap.fromTo(galleryContainer, { opacity: 0 }, { opacity: 1, duration: 0.5 });
-        displayCards(getCurrentPageCards(), galleryContainer);
+function refreshGrid() {
+  const grid = document.getElementById('pokeGrid');
+  grid.innerHTML = '';
+  getDisplayList().forEach(poke => {
+    const card = document.createElement('div');
+    card.className = 'poke-card' + (draftedIds.has(poke.id) ? ' drafted' : '');
+    card.dataset.id = poke.id;
+    card.innerHTML = `
+      <img src="${poke.sprite}" alt="${poke.name}" onerror="this.style.visibility='hidden'">
+      <div class="pc-num">#${String(poke.id).padStart(3, '0')}</div>
+      <div class="pc-name">${poke.name}</div>
+      <div class="pc-types">${typePills(poke.types)}</div>
+      <div class="pc-bst-lbl">BASE STAT TOTAL</div>
+      <div class="pc-bst">${poke.bst}</div>
+    `;
+    if (!draftedIds.has(poke.id)) {
+      card.addEventListener('click', () => draftPokemon(poke));
     }
+    grid.appendChild(card);
+  });
+}
 
-    function updatePagination() {
-        const totalPages = Math.ceil(filteredCards.length / cardsPerPage);
-        pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
-        prevPageBtn.disabled = currentPage === 1;
-        nextPageBtn.disabled = currentPage === totalPages;
-        gsap.fromTo([prevPageBtn, nextPageBtn], { opacity: 0, y: -20 }, { opacity: 1, y: 0, duration: 0.5, stagger: 0.1 });
-    }
+function refreshTeams() {
+  const list = document.getElementById('teamsList');
+  list.innerHTML = '';
+  const curIdx = currentTeamIdx();
+  teams.forEach((team, i) => {
+    const tile = document.createElement('div');
+    tile.className = 'team-tile' + (i === curIdx ? ' current' : '');
+    const picks = team.picks.length
+      ? team.picks.map(p => `
+          <div class="mini-chip">
+            <img src="${p.sprite}" alt="${p.name}">
+            <span>${p.name}</span>
+          </div>`).join('')
+      : '<span class="tt-empty">No picks yet</span>';
+    tile.innerHTML = `
+      <div class="tt-head">
+        <div class="tt-dot" style="background:${team.color}"></div>
+        <div class="tt-name">${team.name}</div>
+        <div class="tt-count">${team.picks.length}/${numRounds}</div>
+      </div>
+      <div class="tt-picks">${picks}</div>
+    `;
+    list.appendChild(tile);
+  });
+}
 
-    function changePage(amount) {
-        const totalPages = Math.ceil(filteredCards.length / cardsPerPage);
-        currentPage = Math.min(Math.max(currentPage + amount, 1), totalPages);
-        displayCards(getCurrentPageCards(), galleryContainer);
-        updatePagination();
-    }
+// ── Drafting ──
+function draftPokemon(poke) {
+  const ti = currentTeamIdx();
+  teams[ti].picks.push(poke);
+  draftedIds.add(poke.id);
 
-    function getCurrentPageCards() {
-        const startIndex = (currentPage - 1) * cardsPerPage;
-        const endIndex = startIndex + cardsPerPage;
-        return filteredCards.slice(startIndex, endIndex);
-    }
+  const card = document.querySelector(`.poke-card[data-id="${poke.id}"]`);
+  if (card) card.classList.add('drafted');
 
-    function displayCards(cards, container) {
-        container.innerHTML = '';
-        cards.forEach((card) => {
-            const cardElement = document.createElement('div');
-            cardElement.classList.add('card');
-            cardElement.innerHTML = `
-                <img src="${card.images.small}" alt="${card.name}">
-                <h3>${card.name}</h3>
-                <p>HP: ${card.hp || 'N/A'}</p>
-                <p>Rarity: ${card.rarity || 'N/A'}</p>
-                <p>Attack Damage: ${getAttackDamage(card)}</p>
-            `;
-            cardElement.addEventListener('click', () => showCardDetails(card));
-            container.appendChild(cardElement);
-            
-            tippy(cardElement, {
-                content: `
-                    <strong>${card.name}</strong><br>
-                    <em>HP:</em> ${card.hp || 'N/A'}<br>
-                    <em>Rarity:</em> ${card.rarity || 'N/A'}<br>
-                    <em>Set:</em> ${card.set.name}
-                `,
-                allowHTML: true,
-            });
+  currentPickInRound++;
+  if (currentPickInRound >= numTeams) {
+    currentPickInRound = 0;
+    currentRound++;
+  }
 
-            gsap.fromTo(cardElement, { scale: 0.9 }, { scale: 1, duration: 0.3 });
-        });
+  if (currentRound >= numRounds) {
+    showComplete();
+    return;
+  }
 
-        gsap.fromTo('.card', { opacity: 0, y: 20 }, { opacity: 1, y: 0, stagger: 0.1, duration: 0.5 });
-    }
+  refreshHeader();
+  refreshSnakeBar();
+  refreshTeams();
+}
 
-    function showCardDetails(card) {
-        modalContent.innerHTML = `
-            <img src="${card.images.large}" alt="${card.name}" style="width: 100%;">
-            <h2>${card.name}</h2>
-            <p><strong>HP:</strong> ${card.hp || 'N/A'}</p>
-            <p><strong>Rarity:</strong> ${card.rarity || 'N/A'}</p>
-            <p><strong>Attack Damage:</strong> ${getAttackDamage(card)}</p>
-            <p><strong>Type:</strong> ${card.types ? card.types.join(', ') : 'N/A'}</p>
-            <p><strong>Set:</strong> ${card.set.name}</p>
-            <p><strong>Artist:</strong> ${card.artist}</p>
-            <p><strong>Flavor Text:</strong> ${card.flavorText || 'N/A'}</p>
-            <p><strong>Abilities:</strong> ${card.abilities ? card.abilities.map(a => a.name).join(', ') : 'N/A'}</p>
-        `;
-        modal.style.display = 'block';
-        modal.classList.add('show');
-        gsap.fromTo(modalContent, { scale: 0.9, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.3 });
-    }
+// ── Filters / Sort ──
+function filterSearch(val) { curSearch = val.toLowerCase(); refreshGrid(); }
+function filterType(val)   { curType = val; refreshGrid(); }
+function sortBy(val)       { curSort = val; refreshGrid(); }
 
-    function getAttackDamage(card) {
-        if (!card.attacks) return 'N/A';
-        return card.attacks.reduce((total, attack) => total + (attack.damage ? parseInt(attack.damage) : 0), 0);
-    }
+// ── Complete Screen ──
+function showComplete() {
+  document.getElementById('draftScreen').style.display = 'none';
+  const screen = document.getElementById('completeScreen');
+  screen.style.display = 'flex';
 
-    let achievements = {
-        firstSearch: false,
-        firstSort: false,
-        firstFilter: false,
-    };
+  const ranked = [...teams].sort((a, b) =>
+    b.picks.reduce((s, p) => s + p.bst, 0) - a.picks.reduce((s, p) => s + p.bst, 0)
+  );
 
-    searchInput.addEventListener('input', () => {
-        if (!achievements.firstSearch) {
-            alert('Achievement unlocked: First Search!');
-            achievements.firstSearch = true;
-        }
-        filterAndSortCards();
-    });
+  const MEDALS = ['🏆', '🥈', '🥉'];
+  const grid = document.getElementById('compGrid');
+  grid.innerHTML = '';
 
-    sortSelect.addEventListener('change', () => {
-        if (!achievements.firstSort) {
-            alert('Achievement unlocked: First Sort!');
-            achievements.firstSort = true;
-        }
-        filterAndSortCards();
-    });
+  ranked.forEach((team, rank) => {
+    const totalBst = team.picks.reduce((s, p) => s + p.bst, 0);
+    const picks = team.picks.map(p => `
+      <div class="comp-pick">
+        <img src="${p.sprite}" alt="${p.name}">
+        <div class="comp-pick-info">
+          <div class="comp-pick-name">${p.name}</div>
+          <div class="comp-pick-types">${typePills(p.types)}</div>
+        </div>
+        <div class="comp-pick-bst-val">${p.bst}</div>
+      </div>
+    `).join('');
 
-    typeFilter.addEventListener('change', () => {
-        if (!achievements.firstFilter) {
-            alert('Achievement unlocked: First Filter!');
-            achievements.firstFilter = true;
-        }
-        filterAndSortCards();
-    });
-});
+    const el = document.createElement('div');
+    el.className = 'comp-team';
+    el.innerHTML = `
+      <div class="comp-team-head">
+        <div style="width:13px;height:13px;border-radius:50%;background:${team.color};flex-shrink:0"></div>
+        ${MEDALS[rank] ? MEDALS[rank] + ' ' : ''}${team.name}
+        <div class="comp-bst-total">TOTAL ${totalBst}</div>
+      </div>
+      <div class="comp-picks">${picks}</div>
+    `;
+    grid.appendChild(el);
+  });
+}
+
+// ── Restart ──
+function restart() {
+  allPokemon = []; teams = []; draftedIds.clear(); snakeOrder = [];
+  currentRound = 0; currentPickInRound = 0;
+  curSort = 'bst-desc'; curSearch = ''; curType = '';
+  document.getElementById('typeFilter').innerHTML = '<option value="">All Types</option>';
+  document.getElementById('progressFill').style.width = '0%';
+  document.getElementById('completeScreen').style.display = 'none';
+  document.getElementById('setupScreen').style.display = 'flex';
+  renderNameInputs();
+}
+
+// ── Init ──
+updateTeamCount(4);
