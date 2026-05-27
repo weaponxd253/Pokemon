@@ -606,34 +606,81 @@ function restart() {
   allPokemon = []; teams = []; draftedIds.clear(); snakeOrder = [];
   draftOrderIndices = []; currentGenIdx = 0; draftNumber = 1;
   currentRound = 0; currentPickInRound = 0; cpuThinking = false;
+  _savedForResume = null;
   curSort = 'bst-desc'; curSearch = ''; curType = '';
   document.getElementById('typeFilter').innerHTML = '<option value="">All Types</option>';
   document.getElementById('progressFill').style.width = '0%';
   document.getElementById('completeScreen').style.display = 'none';
   document.getElementById('lobbyScreen').style.display = 'none';
+  document.getElementById('resumeScreen').style.display = 'none';
   document.getElementById('setupScreen').style.display = 'flex';
   renderNameInputs();
 }
 
 // ── Init ──
+// ── Resume Screen ──
+let _savedForResume = null;
+
 async function init() {
   await openDB();
 
   const saved = loadSeason();
   if (saved) {
-    const teamNames = saved.teams.map(t => t.name).join(', ');
-    const gen = GENS[saved.currentGenIdx ?? 0];
-    const resume = confirm(
-      `Resume ${gen?.label ?? 'draft'}? ${teamNames} — Round ${saved.currentRound + 1}`
-    );
-    if (resume) {
-      restoreSeason(saved);
-      return;
-    } else {
-      clearSeason();
-    }
+    _savedForResume = saved;
+    showResumeScreen(saved);
+    return;
   }
 
+  updateTeamCount(4);
+  document.getElementById('setupScreen').style.display = 'flex';
+}
+
+function showResumeScreen(saved) {
+  const gen = GENS[saved.currentGenIdx ?? 0];
+  const round = saved.currentRound + 1;
+  const totalRounds = saved.numRounds;
+
+  const badge = document.getElementById('resumeGenBadge');
+  badge.textContent = gen.short;
+  badge.style.background = gen.color;
+
+  document.getElementById('resumeMetaTitle').textContent =
+    'Draft ' + (saved.draftNumber ?? 1) + ' · ' + gen.label;
+  document.getElementById('resumeMetaSub').textContent =
+    'Round ' + round + ' of ' + totalRounds + '  ·  ' + saved.numTeams + ' teams';
+
+  const teamsEl = document.getElementById('resumeTeams');
+  teamsEl.innerHTML = saved.teams.map(t => {
+    const pickCount = t.picks.length;
+    const spriteSlots = t.picks.slice(0, 8).map(id =>
+      '<img class="resume-sprite" ' +
+      'src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/' + id + '.png" ' +
+      'alt="" onerror="this.style.opacity=0">'
+    ).join('');
+    const cpuBadge = t.isCpu
+      ? '<span class="tt-cpu-badge" style="font-size:6px">CPU</span>'
+      : '';
+    return '<div class="resume-team-row">' +
+      '<div class="resume-team-dot" style="background:' + t.color + '"></div>' +
+      '<div class="resume-team-name">' + t.name + ' ' + cpuBadge + '</div>' +
+      '<div class="resume-sprites">' + spriteSlots + '</div>' +
+      '<div class="resume-pick-count">' + pickCount + ' pick' + (pickCount !== 1 ? 's' : '') + '</div>' +
+      '</div>';
+  }).join('');
+
+  document.getElementById('resumeScreen').style.display = 'flex';
+}
+
+function resumeDraft() {
+  document.getElementById('resumeScreen').style.display = 'none';
+  if (_savedForResume) restoreSeason(_savedForResume);
+}
+
+function discardAndNew() {
+  clearSeason();
+  _savedForResume = null;
+  document.getElementById('resumeScreen').style.display = 'none';
+  document.getElementById('setupScreen').style.display = 'flex';
   updateTeamCount(4);
 }
 
