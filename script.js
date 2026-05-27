@@ -92,25 +92,51 @@ async function startDraft() {
 // ── Data Loading ──
 async function loadPokemonData(limit) {
   allPokemon = [];
-  let loaded = 0;
-  document.getElementById('loadCount').textContent = `0 / ${limit}`;
 
-  const BATCH = 60;
-  for (let i = 0; i < limit; i += BATCH) {
-    const ids = Array.from({ length: Math.min(BATCH, limit - i) }, (_, j) => i + j + 1);
-    const results = await Promise.all(ids.map(id =>
-      fetch(`https://pokeapi.co/api/v2/pokemon/${id}`)
-        .then(r => r.json())
-        .then(data => {
-          loaded++;
-          document.getElementById('progressFill').style.width = `${(loaded / limit) * 100}%`;
-          document.getElementById('loadCount').textContent = `${loaded} / ${limit}`;
-          document.getElementById('loadName').textContent = data.name;
-          return parsePokemon(data);
-        })
-    ));
-    allPokemon.push(...results);
+  // Check how many are already cached
+  const cached = await countCachedPokemon();
+  const fullycached = cached >= limit;
+
+  if (fullyached) {
+    // Skip the loading screen entirely — read straight from IndexedDB
+    document.getElementById('loadingScreen').style.display = 'none';
+    document.getElementById('loadCount').textContent = `${limit} cached`;
+    for (let id = 1; id <= limit; id++) {
+      const p = await getCachedPokemon(id);
+      if (p) allPokemon.push(p);
+    }
+  } else {
+    // Fetch from network, write to cache as we go
+    let loaded = 0;
+    document.getElementById('loadCount').textContent = `0 / ${limit}`;
+    const BATCH = 60;
+
+    for (let i = 0; i < limit; i += BATCH) {
+      const ids = Array.from(
+        { length: Math.min(BATCH, limit - i) },
+        (_, j) => i + j + 1
+      );
+      const results = await Promise.all(ids.map(async (id) => {
+        // Try cache first, even during a partial load
+        const hit = await getCachedPokemon(id);
+        if (hit) { loaded++; return hit; }
+
+        const data = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`)
+          .then(r => r.json());
+        const parsed = parsePokemon(data);
+        await putCachedPokemon(parsed);   // write to IndexedDB
+
+        loaded++;
+        const pct = Math.round((loaded / limit) * 100);
+        document.getElementById('progressFill').style.width = `${pct}%`;
+        document.getElementById('loadCount').textContent = `${loaded} / ${limit}`;
+        document.getElementById('loadName').textContent = parsed.name;
+        return parsed;
+      }));
+      allPokemon.push(...results);
+    }
   }
+
   allPokemon.sort((a, b) => b.bst - a.bst);
 }
 
@@ -292,6 +318,22 @@ function draftPokemon(poke) {
   refreshHeader();
   refreshSnakeBar();
   refreshTeams();
+  saveSeason(buildSeasonState())
+}
+
+function buildSeasonState() {
+  return {
+    version: 1,
+    currentGen: parseInt(document.getElementById('genSelect').value),
+    draftNumber: 1,
+    numTeams, numRounds,
+    teams: teams.map(t => ({ ...t, picks: t.picks.map(p => p.id ?? p) })),
+    draftedIds: [...draftedIds],
+    snakeOrder,
+    currentRound,
+    currentPickInRound,
+    status: 'drafting',
+  };
 }
 
 // ── Filters / Sort ──
@@ -353,4 +395,51 @@ function restart() {
 }
 
 // ── Init ──
-updateTeamCount(4);
+async function init() {
+  await openDB();
+
+  const saved = loadSeason();
+  if (saved) {
+    // Show a "resume?" prompt instead of setup
+    const resume = confirm(
+      `Resume draft? ${saved.teams.map(t => t.name).join(', ')} — Round ${saved.currentRound + 1}`
+    );
+    if (resume) {
+      restoreSeason(saved);
+      return;
+    } else {
+      clearSeason();
+    }
+  }
+
+  updateTeamCount(4); // fresh setup
+}
+
+async function restoreSeason(saved) {
+  numTeams = saved.numTeams;
+  numRounds = saved.numRounds;
+  currentRound = saved.currentRound;
+  currentPickInRound = saved.currentPickInRound;
+  snakeOrder = saved.snakeOrder;
+  draftedIds = new Set(saved.draftedIds);
+
+  // Rehydrate teams — look up full pokemon objects from IndexedDB
+  teams = await Promise.all(saved.teams.map(async (t) => ({
+    ...t,
+    picks: await Promise.all(t.picks.map(id => getCachedPokemon(id))),
+  })));
+
+  await loadPokemonData(saved.currentGen);
+  buildSnakeOrder();
+  populateTypeFilter();
+
+  document.getElementById('setupScreen').style.display = 'none';
+  document.getElementById('draftScreen').style.display = 'flex';
+
+  refreshHeader();
+  refreshSnakeBar();
+  refreshGrid();
+  refreshTeams();
+}
+
+init();
