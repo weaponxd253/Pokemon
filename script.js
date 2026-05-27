@@ -17,6 +17,13 @@ const DEFAULT_NAMES = [
   'Blaze Squad', 'Purple Haze', 'Pink Tide', 'Teal Force'
 ];
 
+const GENS = [
+  { num: 1, label: 'Gen 1 — Kanto',  short: 'G1', start: 1,   end: 151, color: '#ff6b6b' },
+  { num: 2, label: 'Gen 2 — Johto',  short: 'G2', start: 152, end: 251, color: '#ffd93d' },
+  { num: 3, label: 'Gen 3 — Hoenn',  short: 'G3', start: 252, end: 386, color: '#6bcb77' },
+  { num: 4, label: 'Gen 4 — Sinnoh', short: 'G4', start: 387, end: 493, color: '#4d96ff' },
+];
+
 // ── State ──
 let allPokemon = [];
 let teams = [];
@@ -24,8 +31,29 @@ let numTeams = 4, numRounds = 4;
 let currentRound = 0, currentPickInRound = 0;
 let draftedIds = new Set();
 let snakeOrder = [];
+let draftOrderIndices = [];  // team indices in pick order for current draft
+let currentGenIdx = 0;
+let draftNumber = 1;
 let curSort = 'bst-desc', curSearch = '', curType = '';
 let cpuThinking = false;
+
+// ── Helpers ──
+function getGen(id) {
+  return GENS.find(g => id >= g.start && id <= g.end) ?? GENS[0];
+}
+
+function shuffleArray(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function teamTotalBst(team) {
+  return team.picks.reduce((s, p) => s + (p?.bst ?? 0), 0);
+}
 
 // ── Setup ──
 function updateTeamCount(val) {
@@ -79,9 +107,13 @@ function renderNameInputs() {
 }
 
 async function startDraft() {
+  currentGenIdx = parseInt(document.getElementById('genSelect').value);
+  draftNumber = 1;
+  currentRound = 0;
+  currentPickInRound = 0;
+  draftedIds = new Set();
   numTeams = parseInt(document.getElementById('numTeamsRange').value);
   numRounds = parseInt(document.getElementById('numRoundsRange').value);
-  const limit = parseInt(document.getElementById('genSelect').value);
 
   const nameFields = document.querySelectorAll('.team-name-field');
   const cpuToggles = document.querySelectorAll('.cpu-toggle');
@@ -92,72 +124,73 @@ async function startDraft() {
     picks: []
   }));
 
-  document.getElementById('setupScreen').style.display = 'none';
-  const ls = document.getElementById('loadingScreen');
-  ls.style.display = 'flex';
+  // Randomise first draft order
+  draftOrderIndices = shuffleArray(Array.from({ length: numTeams }, (_, i) => i));
 
-  await loadPokemonData(limit);
+  document.getElementById('setupScreen').style.display = 'none';
+  await loadGen(currentGenIdx);
+
   buildSnakeOrder();
   populateTypeFilter();
 
-  ls.style.display = 'none';
-  const ds = document.getElementById('draftScreen');
-  ds.style.display = 'flex';
+  document.getElementById('loadingScreen').style.display = 'none';
+  document.getElementById('draftScreen').style.display = 'flex';
 
   refreshHeader();
   refreshSnakeBar();
   refreshGrid();
   refreshTeams();
-
-  // Kick off CPU if first pick belongs to a CPU team
   triggerCpuIfNeeded();
 }
 
 // ── Data Loading ──
-async function loadPokemonData(limit) {
+async function loadGen(genIdx) {
+  const gen = GENS[genIdx];
+  document.getElementById('loadLabel').textContent = `Loading ${gen.label}`;
+  document.getElementById('loadingScreen').style.display = 'flex';
+  document.getElementById('progressFill').style.width = '0%';
+  document.getElementById('loadCount').textContent = '0 / 0';
+  document.getElementById('loadName').textContent = '';
+
+  await loadPokemonData(gen.start, gen.end);
+}
+
+async function loadPokemonData(start, end) {
   allPokemon = [];
+  const count = end - start + 1;
 
-  const cached = await countCachedPokemon();
-  const fullyCached = cached >= limit;
-
-  if (fullyCached) {
-    document.getElementById('loadingScreen').style.display = 'none';
-    document.getElementById('loadCount').textContent = `${limit} cached`;
-    for (let id = 1; id <= limit; id++) {
-      const p = await getCachedPokemon(id);
-      if (p) allPokemon.push(p);
-    }
-  } else {
-    let loaded = 0;
-    document.getElementById('loadCount').textContent = `0 / ${limit}`;
-    const BATCH = 60;
-
-    for (let i = 0; i < limit; i += BATCH) {
-      const ids = Array.from(
-        { length: Math.min(BATCH, limit - i) },
-        (_, j) => i + j + 1
-      );
-      const results = await Promise.all(ids.map(async (id) => {
-        const hit = await getCachedPokemon(id);
-        if (hit) { loaded++; return hit; }
-
-        const data = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`)
-          .then(r => r.json());
-        const parsed = parsePokemon(data);
-        await putCachedPokemon(parsed);
-
-        loaded++;
-        const pct = Math.round((loaded / limit) * 100);
-        document.getElementById('progressFill').style.width = `${pct}%`;
-        document.getElementById('loadCount').textContent = `${loaded} / ${limit}`;
-        document.getElementById('loadName').textContent = parsed.name;
-        return parsed;
-      }));
-      allPokemon.push(...results);
-    }
+  // Try to serve entirely from IndexedDB
+  const cached = await getCachedRange(start, end);
+  if (cached.length === count) {
+    allPokemon = cached;
+    return;
   }
 
-  allPokemon.sort((a, b) => b.bst - a.bst);
+  // Partial or no cache — fetch missing with progress
+  const cachedMap = new Map(cached.map(p => [p.id, p]));
+  const allIds = Array.from({ length: count }, (_, i) => start + i);
+  let loaded = 0;
+  document.getElementById('loadCount').textContent = `0 / ${count}`;
+  const BATCH = 60;
+
+  for (let i = 0; i < allIds.length; i += BATCH) {
+    const batchIds = allIds.slice(i, i + BATCH);
+    const results = await Promise.all(batchIds.map(async (id) => {
+      if (cachedMap.has(id)) { loaded++; return cachedMap.get(id); }
+
+      const data = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`).then(r => r.json());
+      const parsed = parsePokemon(data);
+      await putCachedPokemon(parsed);
+
+      loaded++;
+      const pct = Math.round((loaded / count) * 100);
+      document.getElementById('progressFill').style.width = `${pct}%`;
+      document.getElementById('loadCount').textContent = `${loaded} / ${count}`;
+      document.getElementById('loadName').textContent = parsed.name;
+      return parsed;
+    }));
+    allPokemon.push(...results);
+  }
 }
 
 function parsePokemon(data) {
@@ -173,17 +206,19 @@ function parsePokemon(data) {
     sprite: data.sprites.front_default ||
       `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${data.id}.png`,
     types: data.types.map(t => t.type.name),
-    stats,
-    bst
+    stats, bst
   };
 }
 
 // ── Snake Logic ──
 function buildSnakeOrder() {
   snakeOrder = [];
+  const order = draftOrderIndices.length
+    ? draftOrderIndices
+    : Array.from({ length: numTeams }, (_, i) => i);
   for (let r = 0; r < numRounds; r++) {
     for (let p = 0; p < numTeams; p++) {
-      snakeOrder.push(r % 2 === 0 ? p : (numTeams - 1 - p));
+      snakeOrder.push(r % 2 === 0 ? order[p] : order[numTeams - 1 - p]);
     }
   }
 }
@@ -194,28 +229,22 @@ function currentTeamIdx() { return snakeOrder[currentPickNum()]; }
 // ── CPU Logic ──
 function cpuScore(poke, team) {
   const typesOwned = new Set(team.picks.flatMap(p => p.types));
-  // Reward picking a type the team doesn't have yet
   const newTypeBonus = poke.types.some(t => !typesOwned.has(t)) ? 55 : 0;
-  // Random jitter of ±40 BST so it's not perfectly deterministic
   const jitter = (Math.random() - 0.5) * 80;
   return poke.bst + newTypeBonus + jitter;
 }
 
 function cpuPick() {
-  const ti = currentTeamIdx();
-  const team = teams[ti];
+  const team = teams[currentTeamIdx()];
   const available = allPokemon.filter(p => !draftedIds.has(p.id));
   if (!available.length) return;
 
-  // Score every available Pokémon and sort descending
   const scored = available
     .map(p => ({ poke: p, score: cpuScore(p, team) }))
     .sort((a, b) => b.score - a.score);
 
-  // Pick randomly from the top 3 candidates for extra variance
   const topN = Math.min(3, scored.length);
   const choice = scored[Math.floor(Math.random() * topN)].poke;
-
   setCpuThinking(false);
   draftPokemon(choice);
 }
@@ -236,11 +265,8 @@ function triggerCpuIfNeeded() {
   if (currentRound >= numRounds) return;
   const ti = currentTeamIdx();
   if (!teams[ti].isCpu) return;
-
   setCpuThinking(true);
-  // Delay between 800ms and 1600ms for natural feel
-  const delay = 800 + Math.random() * 800;
-  setTimeout(cpuPick, delay);
+  setTimeout(cpuPick, 800 + Math.random() * 800);
 }
 
 // ── Rendering ──
@@ -257,15 +283,16 @@ function populateTypeFilter() {
 }
 
 function refreshHeader() {
-  if (cpuThinking) return; // don't overwrite the thinking state mid-animation
+  if (cpuThinking) return;
   const total = numRounds * numTeams;
   const pick = currentPickNum();
   const team = teams[currentTeamIdx()];
+  const gen = GENS[currentGenIdx];
   const picker = document.getElementById('dhPicker');
   picker.textContent = team.name + (team.isCpu ? ' (CPU)' : '') + "'s Pick";
   picker.style.color = team.color;
   document.getElementById('dhSub').textContent =
-    `Round ${currentRound + 1}  ·  Pick ${currentPickInRound + 1} of ${numTeams}`;
+    `${gen.short} · Round ${currentRound + 1} · Pick ${currentPickInRound + 1} of ${numTeams}`;
   document.getElementById('dhRight').textContent =
     `${total - pick} pick${total - pick !== 1 ? 's' : ''} remaining`;
 }
@@ -337,7 +364,7 @@ function refreshGrid() {
     `;
     if (!draftedIds.has(poke.id)) {
       card.addEventListener('click', () => {
-        if (cpuThinking) return; // block human clicks during CPU turn
+        if (cpuThinking) return;
         draftPokemon(poke);
       });
     }
@@ -352,22 +379,29 @@ function refreshTeams() {
   teams.forEach((team, i) => {
     const tile = document.createElement('div');
     tile.className = 'team-tile' + (i === curIdx ? ' current' : '');
+    const isMultiGen = draftNumber > 1;
     const picks = team.picks.length
-      ? team.picks.map(p => `
-          <div class="mini-chip">
-            <img src="${p.sprite}" alt="${p.name}">
-            <span>${p.name}</span>
-          </div>`).join('')
+      ? team.picks.map(p => {
+          const gen = getGen(p.id);
+          const isCurGen = gen.num === GENS[currentGenIdx].num;
+          const genTag = isMultiGen
+            ? `<span class="mini-gen-tag" style="background:${gen.color}">${gen.short}</span>`
+            : '';
+          return `
+            <div class="mini-chip${isCurGen ? '' : ' prev-gen'}">
+              <img src="${p.sprite}" alt="${p.name}">
+              ${genTag}
+              <span>${p.name}</span>
+            </div>`;
+        }).join('')
       : '<span class="tt-empty">No picks yet</span>';
-    const cpuBadge = team.isCpu
-      ? '<span class="tt-cpu-badge">CPU</span>'
-      : '';
+    const cpuBadge = team.isCpu ? '<span class="tt-cpu-badge">CPU</span>' : '';
     tile.innerHTML = `
       <div class="tt-head">
         <div class="tt-dot" style="background:${team.color}"></div>
         <div class="tt-name">${team.name}</div>
         ${cpuBadge}
-        <div class="tt-count">${team.picks.length}/${numRounds}</div>
+        <div class="tt-count">${team.picks.length}/${numRounds * draftNumber}</div>
       </div>
       <div class="tt-picks">${picks}</div>
     `;
@@ -391,7 +425,13 @@ function draftPokemon(poke) {
   }
 
   if (currentRound >= numRounds) {
-    showComplete();
+    saveSeason(buildSeasonState());
+    const hasMoreGens = currentGenIdx < GENS.length - 1;
+    if (hasMoreGens) {
+      showLobby();
+    } else {
+      showComplete();
+    }
     return;
   }
 
@@ -404,17 +444,111 @@ function draftPokemon(poke) {
 
 function buildSeasonState() {
   return {
-    version: 1,
-    currentGen: parseInt(document.getElementById('genSelect').value),
-    draftNumber: 1,
+    version: 2,
+    currentGenIdx,
+    draftNumber,
     numTeams, numRounds,
     teams: teams.map(t => ({ ...t, picks: t.picks.map(p => p.id ?? p) })),
     draftedIds: [...draftedIds],
     snakeOrder,
+    draftOrderIndices,
     currentRound,
     currentPickInRound,
     status: 'drafting',
   };
+}
+
+// ── Lobby (between gens) ──
+function showLobby() {
+  document.getElementById('draftScreen').style.display = 'none';
+  document.getElementById('lobbyScreen').style.display = 'flex';
+
+  const gen = GENS[currentGenIdx];
+  const nextGen = GENS[currentGenIdx + 1];
+
+  document.getElementById('lobbyGenComplete').textContent = `${gen.label} Complete`;
+  document.getElementById('lobbyDraftNum').textContent =
+    `Draft ${draftNumber} · Season continues`;
+
+  // Rank teams by cumulative BST descending
+  const ranked = [...teams]
+    .map((t, idx) => ({ team: t, idx, bst: teamTotalBst(t) }))
+    .sort((a, b) => b.bst - a.bst);
+
+  // Next draft order = reverse standings (worst BST picks first)
+  const nextOrder = [...ranked].reverse();
+
+  // Order pills
+  const pillsEl = document.getElementById('lobbyOrderPills');
+  pillsEl.innerHTML = nextOrder.map((entry, i) => `
+    <div class="order-pill">
+      <span class="order-num">${i + 1}</span>
+      <span class="order-dot" style="background:${entry.team.color}"></span>
+      <span class="order-name">${entry.team.name}${entry.team.isCpu ? ' (CPU)' : ''}</span>
+    </div>
+  `).join('');
+
+  // Standings cards
+  const MEDALS = ['🏆', '🥈', '🥉'];
+  document.getElementById('lobbyStandings').innerHTML = ranked.map(({ team, bst }, rank) => {
+    const picks = team.picks.map(p => {
+      const g = getGen(p.id);
+      return `
+        <div class="lobby-pick" title="${p.name} (${g.label})">
+          <img src="${p.sprite}" alt="${p.name}">
+          <span class="lobby-gen-tag" style="background:${g.color}">${g.short}</span>
+        </div>`;
+    }).join('');
+    const cpuBadge = team.isCpu ? '<span class="tt-cpu-badge">CPU</span>' : '';
+    return `
+      <div class="lobby-team-card">
+        <div class="lobby-team-head">
+          <span class="lobby-rank">${MEDALS[rank] || rank + 1}</span>
+          <span class="lobby-team-dot" style="background:${team.color}"></span>
+          <span class="lobby-team-name">${team.name} ${cpuBadge}</span>
+          <span class="lobby-bst">BST ${bst}</span>
+        </div>
+        <div class="lobby-picks-grid">${picks || '<span class="tt-empty" style="padding:8px">No picks</span>'}</div>
+      </div>`;
+  }).join('');
+
+  document.getElementById('btnContinue').textContent = `Continue to ${nextGen.label} →`;
+}
+
+async function continueToNextGen() {
+  currentGenIdx++;
+  draftNumber++;
+  currentRound = 0;
+  currentPickInRound = 0;
+  cpuThinking = false;
+
+  // Worst total BST picks first in next snake
+  draftOrderIndices = [...teams]
+    .map((t, i) => ({ i, bst: teamTotalBst(t) }))
+    .sort((a, b) => a.bst - b.bst)
+    .map(t => t.i);
+
+  document.getElementById('lobbyScreen').style.display = 'none';
+  await loadGen(currentGenIdx);
+
+  buildSnakeOrder();
+  document.getElementById('typeFilter').innerHTML = '<option value="">All Types</option>';
+  populateTypeFilter();
+
+  document.getElementById('loadingScreen').style.display = 'none';
+  document.getElementById('draftScreen').style.display = 'flex';
+
+  refreshHeader();
+  refreshSnakeBar();
+  refreshGrid();
+  refreshTeams();
+  saveSeason(buildSeasonState());
+  triggerCpuIfNeeded();
+}
+
+function endSeason() {
+  document.getElementById('lobbyScreen').style.display = 'none';
+  showComplete();
 }
 
 // ── Filters / Sort ──
@@ -422,33 +556,36 @@ function filterSearch(val) { curSearch = val.toLowerCase(); refreshGrid(); }
 function filterType(val)   { curType = val; refreshGrid(); }
 function sortBy(val)       { curSort = val; refreshGrid(); }
 
-// ── Complete Screen ──
+// ── Complete Screen (final) ──
 function showComplete() {
   document.getElementById('draftScreen').style.display = 'none';
-  const screen = document.getElementById('completeScreen');
-  screen.style.display = 'flex';
+  document.getElementById('lobbyScreen').style.display = 'none';
+  document.getElementById('completeScreen').style.display = 'flex';
+  clearSeason();
 
-  const ranked = [...teams].sort((a, b) =>
-    b.picks.reduce((s, p) => s + p.bst, 0) - a.picks.reduce((s, p) => s + p.bst, 0)
-  );
-
+  const ranked = [...teams].sort((a, b) => teamTotalBst(b) - teamTotalBst(a));
   const MEDALS = ['🏆', '🥈', '🥉'];
   const grid = document.getElementById('compGrid');
   grid.innerHTML = '';
 
   ranked.forEach((team, rank) => {
-    const totalBst = team.picks.reduce((s, p) => s + p.bst, 0);
+    const totalBst = teamTotalBst(team);
     const cpuLabel = team.isCpu ? ' <span style="font-size:10px;opacity:0.6">(CPU)</span>' : '';
-    const picks = team.picks.map(p => `
-      <div class="comp-pick">
-        <img src="${p.sprite}" alt="${p.name}">
-        <div class="comp-pick-info">
-          <div class="comp-pick-name">${p.name}</div>
-          <div class="comp-pick-types">${typePills(p.types)}</div>
-        </div>
-        <div class="comp-pick-bst-val">${p.bst}</div>
-      </div>
-    `).join('');
+    const picks = team.picks.map(p => {
+      const g = getGen(p.id);
+      return `
+        <div class="comp-pick">
+          <img src="${p.sprite}" alt="${p.name}">
+          <div class="comp-pick-info">
+            <div class="comp-pick-name">${p.name}</div>
+            <div class="comp-pick-types">${typePills(p.types)}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <div class="comp-pick-bst-val">${p.bst}</div>
+            <span style="font-size:9px;font-weight:700;padding:2px 5px;border-radius:4px;background:${g.color};color:#000">${g.short}</span>
+          </div>
+        </div>`;
+    }).join('');
 
     const el = document.createElement('div');
     el.className = 'comp-team';
@@ -467,11 +604,13 @@ function showComplete() {
 // ── Restart ──
 function restart() {
   allPokemon = []; teams = []; draftedIds.clear(); snakeOrder = [];
+  draftOrderIndices = []; currentGenIdx = 0; draftNumber = 1;
   currentRound = 0; currentPickInRound = 0; cpuThinking = false;
   curSort = 'bst-desc'; curSearch = ''; curType = '';
   document.getElementById('typeFilter').innerHTML = '<option value="">All Types</option>';
   document.getElementById('progressFill').style.width = '0%';
   document.getElementById('completeScreen').style.display = 'none';
+  document.getElementById('lobbyScreen').style.display = 'none';
   document.getElementById('setupScreen').style.display = 'flex';
   renderNameInputs();
 }
@@ -482,8 +621,10 @@ async function init() {
 
   const saved = loadSeason();
   if (saved) {
+    const teamNames = saved.teams.map(t => t.name).join(', ');
+    const gen = GENS[saved.currentGenIdx ?? 0];
     const resume = confirm(
-      `Resume draft? ${saved.teams.map(t => t.name).join(', ')} — Round ${saved.currentRound + 1}`
+      `Resume ${gen?.label ?? 'draft'}? ${teamNames} — Round ${saved.currentRound + 1}`
     );
     if (resume) {
       restoreSeason(saved);
@@ -497,11 +638,14 @@ async function init() {
 }
 
 async function restoreSeason(saved) {
+  currentGenIdx = saved.currentGenIdx ?? 0;
+  draftNumber = saved.draftNumber ?? 1;
   numTeams = saved.numTeams;
   numRounds = saved.numRounds;
   currentRound = saved.currentRound;
   currentPickInRound = saved.currentPickInRound;
   snakeOrder = saved.snakeOrder;
+  draftOrderIndices = saved.draftOrderIndices ?? [];
   draftedIds = new Set(saved.draftedIds);
 
   teams = await Promise.all(saved.teams.map(async (t) => ({
@@ -509,11 +653,12 @@ async function restoreSeason(saved) {
     picks: await Promise.all(t.picks.map(id => getCachedPokemon(id))),
   })));
 
-  await loadPokemonData(saved.currentGen);
+  await loadGen(currentGenIdx);
   buildSnakeOrder();
   populateTypeFilter();
 
   document.getElementById('setupScreen').style.display = 'none';
+  document.getElementById('loadingScreen').style.display = 'none';
   document.getElementById('draftScreen').style.display = 'flex';
 
   refreshHeader();
