@@ -4,7 +4,7 @@ const DB_NAME = 'pokedraft';
 const DB_VERSION = 1;
 let db;
 
-export async function openDB() {
+async function openDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = (e) => {
@@ -18,7 +18,7 @@ export async function openDB() {
   });
 }
 
-export async function getCachedPokemon(id) {
+async function getCachedPokemon(id) {
   return new Promise((resolve) => {
     const req = db.transaction('pokemon', 'readonly')
                   .objectStore('pokemon').get(id);
@@ -27,16 +27,16 @@ export async function getCachedPokemon(id) {
   });
 }
 
-export async function putCachedPokemon(pokemon) {
+async function putCachedPokemon(pokemon) {
   return new Promise((resolve) => {
     const tx = db.transaction('pokemon', 'readwrite');
     tx.objectStore('pokemon').put(pokemon);
     tx.oncomplete = resolve;
-    tx.onerror = resolve; // fail silently — network fallback handles it
+    tx.onerror = resolve;
   });
 }
 
-export async function countCachedPokemon() {
+async function countCachedPokemon() {
   return new Promise((resolve) => {
     const req = db.transaction('pokemon', 'readonly')
                   .objectStore('pokemon').count();
@@ -49,7 +49,7 @@ export async function countCachedPokemon() {
 
 const SEASON_KEY = 'pokedraft_season';
 
-export function saveSeason(state) {
+function saveSeason(state) {
   try {
     localStorage.setItem(SEASON_KEY, JSON.stringify(state));
   } catch (e) {
@@ -57,7 +57,7 @@ export function saveSeason(state) {
   }
 }
 
-export function loadSeason() {
+function loadSeason() {
   try {
     const raw = localStorage.getItem(SEASON_KEY);
     return raw ? JSON.parse(raw) : null;
@@ -66,6 +66,6 @@ export function loadSeason() {
   }
 }
 
-export function clearSeason() {
+function clearSeason() {
   localStorage.removeItem(SEASON_KEY);
 }
