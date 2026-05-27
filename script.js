@@ -140,6 +140,7 @@ async function startDraft() {
   refreshSnakeBar();
   refreshGrid();
   refreshTeams();
+  if (isMobile()) initMobileTabs();
   triggerCpuIfNeeded();
 }
 
@@ -438,6 +439,7 @@ function draftPokemon(poke) {
   refreshHeader();
   refreshSnakeBar();
   refreshTeams();
+  flashRosterTab();
   saveSeason(buildSeasonState());
   triggerCpuIfNeeded();
 }
@@ -542,6 +544,7 @@ async function continueToNextGen() {
   refreshSnakeBar();
   refreshGrid();
   refreshTeams();
+  if (isMobile()) initMobileTabs();
   saveSeason(buildSeasonState());
   triggerCpuIfNeeded();
 }
@@ -617,6 +620,51 @@ function restart() {
   renderNameInputs();
 }
 
+// ── Mobile tab switcher ──────────────────────────────────────────────────
+function isMobile() { return window.innerWidth <= 640; }
+
+function initMobileTabs() {
+  const draftBody = document.querySelector('.draft-body');
+
+  // Only inject once
+  if (document.querySelector('.mobile-tabs')) {
+    setMobileTab('pokemon');
+    return;
+  }
+
+  const tabs = document.createElement('div');
+  tabs.className = 'mobile-tabs';
+  tabs.innerHTML = `
+    <button class="mobile-tab active" data-tab="pokemon" onclick="setMobileTab('pokemon')">⚔ POKÉMON</button>
+    <button class="mobile-tab" data-tab="teams" onclick="setMobileTab('teams')">🛡 ROSTERS</button>
+  `;
+  // Insert before draft-body
+  draftBody.parentNode.insertBefore(tabs, draftBody);
+  setMobileTab('pokemon');
+}
+
+function setMobileTab(tab) {
+  document.querySelectorAll('.mobile-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+  const pokemon = document.querySelector('.pokemon-panel');
+  const teams = document.querySelector('.teams-panel');
+  if (isMobile()) {
+    pokemon.classList.toggle('active', tab === 'pokemon');
+    teams.classList.toggle('active', tab === 'teams');
+  } else {
+    pokemon.classList.remove('active');
+    teams.classList.remove('active');
+  }
+}
+
+// Switch to rosters tab after a pick so user can see their new Pokémon
+function flashRosterTab() {
+  if (!isMobile()) return;
+  setMobileTab('teams');
+  setTimeout(() => setMobileTab('pokemon'), 1200);
+}
+
 // ── Init ──
 // ── Resume Screen ──
 let _savedForResume = null;
@@ -670,6 +718,7 @@ function showResumeScreen(saved) {
   }).join('');
 
   document.getElementById('setupScreen').style.display = 'none';
+  document.getElementById('setupScreen').style.display = 'none';
   document.getElementById('resumeScreen').style.display = 'flex';
 }
 
@@ -708,12 +757,19 @@ async function restoreSeason(saved) {
 
   document.getElementById('setupScreen').style.display = 'none';
   document.getElementById('loadingScreen').style.display = 'none';
-  document.getElementById('draftScreen').style.display = 'flex';
 
+  if (currentRound >= numRounds) {
+    const hasMoreGens = currentGenIdx < GENS.length - 1;
+    if (hasMoreGens) { showLobby(); } else { showComplete(); }
+    return;
+  }
+
+  document.getElementById('draftScreen').style.display = 'flex';
   refreshHeader();
   refreshSnakeBar();
   refreshGrid();
   refreshTeams();
+  if (isMobile()) initMobileTabs();
   triggerCpuIfNeeded();
 }
 
