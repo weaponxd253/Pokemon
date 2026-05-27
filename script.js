@@ -632,6 +632,7 @@ async function init() {
   }
 
   updateTeamCount(4);
+  renderNameInputs();
   document.getElementById('setupScreen').style.display = 'flex';
 }
 
@@ -668,6 +669,7 @@ function showResumeScreen(saved) {
       '</div>';
   }).join('');
 
+  document.getElementById('setupScreen').style.display = 'none';
   document.getElementById('resumeScreen').style.display = 'flex';
 }
 
