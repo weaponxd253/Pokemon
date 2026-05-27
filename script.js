@@ -93,12 +93,10 @@ async function startDraft() {
 async function loadPokemonData(limit) {
   allPokemon = [];
 
-  // Check how many are already cached
   const cached = await countCachedPokemon();
-  const fullycached = cached >= limit;
+  const fullyCached = cached >= limit;
 
-  if (fullyached) {
-    // Skip the loading screen entirely — read straight from IndexedDB
+  if (fullyCached) {
     document.getElementById('loadingScreen').style.display = 'none';
     document.getElementById('loadCount').textContent = `${limit} cached`;
     for (let id = 1; id <= limit; id++) {
@@ -106,7 +104,6 @@ async function loadPokemonData(limit) {
       if (p) allPokemon.push(p);
     }
   } else {
-    // Fetch from network, write to cache as we go
     let loaded = 0;
     document.getElementById('loadCount').textContent = `0 / ${limit}`;
     const BATCH = 60;
@@ -117,14 +114,13 @@ async function loadPokemonData(limit) {
         (_, j) => i + j + 1
       );
       const results = await Promise.all(ids.map(async (id) => {
-        // Try cache first, even during a partial load
         const hit = await getCachedPokemon(id);
         if (hit) { loaded++; return hit; }
 
         const data = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`)
           .then(r => r.json());
         const parsed = parsePokemon(data);
-        await putCachedPokemon(parsed);   // write to IndexedDB
+        await putCachedPokemon(parsed);
 
         loaded++;
         const pct = Math.round((loaded / limit) * 100);
@@ -318,7 +314,7 @@ function draftPokemon(poke) {
   refreshHeader();
   refreshSnakeBar();
   refreshTeams();
-  saveSeason(buildSeasonState())
+  saveSeason(buildSeasonState());
 }
 
 function buildSeasonState() {
@@ -400,7 +396,6 @@ async function init() {
 
   const saved = loadSeason();
   if (saved) {
-    // Show a "resume?" prompt instead of setup
     const resume = confirm(
       `Resume draft? ${saved.teams.map(t => t.name).join(', ')} — Round ${saved.currentRound + 1}`
     );
@@ -412,7 +407,7 @@ async function init() {
     }
   }
 
-  updateTeamCount(4); // fresh setup
+  updateTeamCount(4);
 }
 
 async function restoreSeason(saved) {
@@ -423,7 +418,6 @@ async function restoreSeason(saved) {
   snakeOrder = saved.snakeOrder;
   draftedIds = new Set(saved.draftedIds);
 
-  // Rehydrate teams — look up full pokemon objects from IndexedDB
   teams = await Promise.all(saved.teams.map(async (t) => ({
     ...t,
     picks: await Promise.all(t.picks.map(id => getCachedPokemon(id))),
