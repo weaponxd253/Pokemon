@@ -69,3 +69,13 @@ function loadSeason() {
 function clearSeason() {
   localStorage.removeItem(SEASON_KEY);
 }
+
+async function getCachedRange(start, end) {
+  return new Promise((resolve) => {
+    const range = IDBKeyRange.bound(start, end);
+    const req = db.transaction('pokemon', 'readonly')
+                  .objectStore('pokemon').getAll(range);
+    req.onsuccess = () => resolve(req.result ?? []);
+    req.onerror = () => resolve([]);
+  });
+}
