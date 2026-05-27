@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>Pokémon Draft League</title>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="pokemon-draft-league.css">
 </head>
 <body>
 
@@ -91,6 +91,7 @@
   </div>
 </div>
 
+<!-- ══════════════ COMPLETE ══════════════ -->
 <div id="completeScreen">
   <div class="comp-title">DRAFT COMPLETE!</div>
   <div class="comp-sub">Power Rankings by Total Base Stat</div>
@@ -98,6 +99,8 @@
   <button class="btn-restart" onclick="restart()">↺ &nbsp;NEW DRAFT</button>
 </div>
 
-<script src="script.js"></script>
+<!-- storage.js MUST come before pokemon-draft-league.js -->
+<script src="storage.js"></script>
+<script src="pokemon-draft-league.js"></script>
 </body>
 </html>
