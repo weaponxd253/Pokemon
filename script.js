@@ -13,6 +13,27 @@ const TYPE_COLORS = {
   dark:     '#705848', steel:    '#B8B8D0', fairy:    '#EE99AC'
 };
 
+const TYPE_CHART = {
+  normal:   { rock: 0.5, ghost: 0, steel: 0.5 },
+  fire:     { fire: 0.5, water: 0.5, grass: 2, ice: 2, bug: 2, rock: 0.5, dragon: 0.5, steel: 2 },
+  water:    { fire: 2, water: 0.5, grass: 0.5, ground: 2, rock: 2, dragon: 0.5 },
+  electric: { water: 2, electric: 0.5, grass: 0.5, ground: 0, flying: 2, dragon: 0.5 },
+  grass:    { fire: 0.5, water: 2, grass: 0.5, poison: 0.5, ground: 2, flying: 0.5, bug: 0.5, rock: 2, dragon: 0.5, steel: 0.5 },
+  ice:      { fire: 0.5, water: 0.5, grass: 2, ice: 0.5, ground: 2, flying: 2, dragon: 2, steel: 0.5 },
+  fighting: { normal: 2, ice: 2, poison: 0.5, flying: 0.5, psychic: 0.5, bug: 0.5, rock: 2, ghost: 0, dark: 2, steel: 2, fairy: 0.5 },
+  poison:   { grass: 2, poison: 0.5, ground: 0.5, rock: 0.5, ghost: 0.5, steel: 0, fairy: 2 },
+  ground:   { fire: 2, electric: 2, grass: 0.5, poison: 2, flying: 0, bug: 0.5, rock: 2, steel: 2 },
+  flying:   { electric: 0.5, grass: 2, fighting: 2, bug: 2, rock: 0.5, steel: 0.5 },
+  psychic:  { fighting: 2, poison: 2, psychic: 0.5, dark: 0, steel: 0.5 },
+  bug:      { fire: 0.5, grass: 2, fighting: 0.5, poison: 0.5, flying: 0.5, psychic: 2, ghost: 0.5, dark: 2, steel: 0.5, fairy: 0.5 },
+  rock:     { fire: 2, ice: 2, fighting: 0.5, ground: 0.5, flying: 2, bug: 2, steel: 0.5 },
+  ghost:    { normal: 0, psychic: 2, ghost: 2, dark: 0.5 },
+  dragon:   { dragon: 2, steel: 0.5, fairy: 0 },
+  dark:     { fighting: 0.5, psychic: 2, ghost: 2, dark: 0.5, fairy: 0.5 },
+  steel:    { fire: 0.5, water: 0.5, electric: 0.5, ice: 2, rock: 2, steel: 0.5, fairy: 2 },
+  fairy:    { fire: 0.5, fighting: 2, poison: 0.5, dragon: 2, dark: 2, steel: 0.5 },
+};
+
 const DEFAULT_NAMES = [
   'Red Bulls', 'Blue Jays', 'Gold Rush', 'Green Wave',
   'Blaze Squad', 'Purple Haze', 'Pink Tide', 'Teal Force',
@@ -118,6 +139,239 @@ function ensureActiveRosters() {
 
 function isActiveRosterLocked(team) {
   return (team.activeIds ?? []).length === Math.min(ACTIVE_ROSTER_SIZE, team.picks.length);
+}
+
+function typeEffectiveness(attackingType, defendingTypes = []) {
+  return defendingTypes.reduce((multiplier, defendingType) =>
+    multiplier * (TYPE_CHART[attackingType]?.[defendingType] ?? 1), 1);
+}
+
+function uniqueRosterTypes(roster) {
+  return [...new Set(roster.flatMap(p => p?.types ?? []))];
+}
+
+function summarizeEffectiveness(values) {
+  const summary = { immune: 0, resistant: 0, neutral: 0, weak: 0, doubleWeak: 0 };
+  values.forEach(value => {
+    if (value === 0) summary.immune++;
+    else if (value < 1) summary.resistant++;
+    else if (value === 1) summary.neutral++;
+    else if (value >= 4) summary.doubleWeak++;
+    else summary.weak++;
+  });
+  return summary;
+}
+
+function typeCoverageProfile(attackingTypes, defendingRoster) {
+  const defenders = defendingRoster.filter(Boolean);
+  if (!attackingTypes.length || !defenders.length) {
+    return {
+      average: 1,
+      bestAverage: 1,
+      superEffectiveTargets: 0,
+      resistedTargets: 0,
+      immuneTargets: 0,
+      targetScores: [],
+    };
+  }
+
+  const targetScores = defenders.map(poke => {
+    const scores = attackingTypes.map(type => ({
+      type,
+      multiplier: typeEffectiveness(type, poke.types),
+    }));
+    const best = scores.reduce((top, cur) => cur.multiplier > top.multiplier ? cur : top, scores[0]);
+    return {
+      id: poke.id,
+      name: poke.name,
+      types: poke.types,
+      bestType: best.type,
+      bestMultiplier: best.multiplier,
+      averageMultiplier: scores.reduce((sum, s) => sum + s.multiplier, 0) / scores.length,
+    };
+  });
+
+  return {
+    average: targetScores.reduce((sum, s) => sum + s.averageMultiplier, 0) / targetScores.length,
+    bestAverage: targetScores.reduce((sum, s) => sum + s.bestMultiplier, 0) / targetScores.length,
+    superEffectiveTargets: targetScores.filter(s => s.bestMultiplier > 1).length,
+    resistedTargets: targetScores.filter(s => s.bestMultiplier < 1 && s.bestMultiplier > 0).length,
+    immuneTargets: targetScores.filter(s => s.bestMultiplier === 0).length,
+    targetScores,
+  };
+}
+
+function defensiveTypeProfile(roster, incomingTypes) {
+  const defenders = roster.filter(Boolean);
+  if (!defenders.length || !incomingTypes.length) {
+    return {
+      averageTaken: 1,
+      worstAverage: 1,
+      summary: summarizeEffectiveness([]),
+      targetScores: [],
+    };
+  }
+
+  const targetScores = defenders.map(poke => {
+    const scores = incomingTypes.map(type => ({
+      type,
+      multiplier: typeEffectiveness(type, poke.types),
+    }));
+    const worst = scores.reduce((top, cur) => cur.multiplier > top.multiplier ? cur : top, scores[0]);
+    const averageTaken = scores.reduce((sum, s) => sum + s.multiplier, 0) / scores.length;
+    return {
+      id: poke.id,
+      name: poke.name,
+      types: poke.types,
+      worstType: worst.type,
+      worstMultiplier: worst.multiplier,
+      averageTaken,
+    };
+  });
+
+  return {
+    averageTaken: targetScores.reduce((sum, s) => sum + s.averageTaken, 0) / targetScores.length,
+    worstAverage: targetScores.reduce((sum, s) => sum + s.worstMultiplier, 0) / targetScores.length,
+    summary: summarizeEffectiveness(targetScores.flatMap(target =>
+      incomingTypes.map(type => typeEffectiveness(type, target.types)))),
+    targetScores,
+  };
+}
+
+function buildBattleProfile(team) {
+  const activeRoster = getActiveRoster(team);
+  const rosterSize = activeRoster.length;
+  const types = uniqueRosterTypes(activeRoster);
+  const totalBst = activeRoster.reduce((sum, p) => sum + (p?.bst ?? 0), 0);
+  const physicalAttack = activeRoster.reduce((sum, p) => sum + (p?.stats?.attack ?? 0), 0);
+  const specialAttack = activeRoster.reduce((sum, p) => sum + (p?.stats?.['special-attack'] ?? 0), 0);
+  const speed = activeRoster.reduce((sum, p) => sum + (p?.stats?.speed ?? 0), 0);
+  const bulk = activeRoster.reduce((sum, p) =>
+    sum + (p?.stats?.hp ?? 0) + (p?.stats?.defense ?? 0) + (p?.stats?.['special-defense'] ?? 0), 0);
+  const allAttackTypes = Object.keys(TYPE_CHART);
+  const defensiveProfile = defensiveTypeProfile(activeRoster, allAttackTypes);
+
+  return {
+    teamName: team.name,
+    activeIds: activeRoster.map(p => p.id),
+    rosterSize,
+    types,
+    diversity: types.length,
+    averageBst: rosterSize ? Math.round(totalBst / rosterSize) : 0,
+    totalBst,
+    physicalAttack: rosterSize ? Math.round(physicalAttack / rosterSize) : 0,
+    specialAttack: rosterSize ? Math.round(specialAttack / rosterSize) : 0,
+    speed: rosterSize ? Math.round(speed / rosterSize) : 0,
+    bulk: rosterSize ? Math.round(bulk / rosterSize) : 0,
+    defensiveProfile,
+  };
+}
+
+function buildMatchupProfile(teamA, teamB) {
+  const profileA = buildBattleProfile(teamA);
+  const profileB = buildBattleProfile(teamB);
+  const rosterA = getActiveRoster(teamA);
+  const rosterB = getActiveRoster(teamB);
+  const offenseA = typeCoverageProfile(profileA.types, rosterB);
+  const offenseB = typeCoverageProfile(profileB.types, rosterA);
+  const defenseA = defensiveTypeProfile(rosterA, profileB.types);
+  const defenseB = defensiveTypeProfile(rosterB, profileA.types);
+
+  return {
+    teamA: profileA,
+    teamB: profileB,
+    offenseA,
+    offenseB,
+    defenseA,
+    defenseB,
+    typeEdgeA: Number((offenseA.bestAverage - offenseB.bestAverage + defenseB.averageTaken - defenseA.averageTaken).toFixed(3)),
+    typeEdgeB: Number((offenseB.bestAverage - offenseA.bestAverage + defenseA.averageTaken - defenseB.averageTaken).toFixed(3)),
+  };
+}
+
+function gameMatchupProfile(teamAIdx, teamBIdx) {
+  if (!Number.isInteger(teamAIdx) || !Number.isInteger(teamBIdx)) return null;
+  return buildMatchupProfile(teams[teamAIdx], teams[teamBIdx]);
+}
+
+function clamp(num, min, max) {
+  return Math.max(min, Math.min(max, num));
+}
+
+function normalizedDiff(a, b, scale) {
+  if (!scale) return 0;
+  return clamp((a - b) / scale, -1, 1);
+}
+
+function matchupScore(teamA, teamB) {
+  const matchup = buildMatchupProfile(teamA, teamB);
+  const ratingA = teamRating(teamA);
+  const ratingB = teamRating(teamB);
+  const attackA = Math.max(matchup.teamA.physicalAttack, matchup.teamA.specialAttack);
+  const attackB = Math.max(matchup.teamB.physicalAttack, matchup.teamB.specialAttack);
+  const mixedAttackA = 1 - Math.abs(matchup.teamA.physicalAttack - matchup.teamA.specialAttack) / Math.max(1, attackA);
+  const mixedAttackB = 1 - Math.abs(matchup.teamB.physicalAttack - matchup.teamB.specialAttack) / Math.max(1, attackB);
+
+  const components = {
+    rating: normalizedDiff(ratingA, ratingB, 650),
+    type: clamp(matchup.typeEdgeA / 2.5, -1, 1),
+    speed: normalizedDiff(matchup.teamA.speed, matchup.teamB.speed, 90),
+    bulk: normalizedDiff(matchup.teamA.bulk, matchup.teamB.bulk, 220),
+    attack: normalizedDiff(attackA, attackB, 95),
+    mixedAttack: normalizedDiff(mixedAttackA, mixedAttackB, 0.75),
+    diversity: normalizedDiff(matchup.teamA.diversity, matchup.teamB.diversity, 10),
+  };
+
+  const weightedEdge =
+    components.rating * 0.48 +
+    components.type * 0.22 +
+    components.speed * 0.08 +
+    components.bulk * 0.08 +
+    components.attack * 0.07 +
+    components.mixedAttack * 0.04 +
+    components.diversity * 0.03;
+  const chanceA = clamp(0.5 + weightedEdge * 0.32, 0.18, 0.82);
+
+  return {
+    ratingA,
+    ratingB,
+    matchup,
+    components,
+    edgeA: Number(weightedEdge.toFixed(3)),
+    edgeB: Number((-weightedEdge).toFixed(3)),
+    chanceA: Number(chanceA.toFixed(3)),
+    chanceB: Number((1 - chanceA).toFixed(3)),
+  };
+}
+
+function compactMatchupScore(score) {
+  if (!score) return null;
+  return {
+    edgeA: score.edgeA,
+    edgeB: score.edgeB,
+    chanceA: score.chanceA,
+    chanceB: score.chanceB,
+    ratingA: score.ratingA,
+    ratingB: score.ratingB,
+    components: Object.fromEntries(
+      Object.entries(score.components).map(([key, value]) => [key, Number(value.toFixed(3))])
+    ),
+  };
+}
+
+function compactMatchupProfile(matchup) {
+  if (!matchup) return null;
+  if (typeof matchup.offenseA === 'number') return matchup;
+  return {
+    typeEdgeA: matchup.typeEdgeA,
+    typeEdgeB: matchup.typeEdgeB,
+    offenseA: Number(matchup.offenseA.bestAverage.toFixed(3)),
+    offenseB: Number(matchup.offenseB.bestAverage.toFixed(3)),
+    defenseA: Number(matchup.defenseA.averageTaken.toFixed(3)),
+    defenseB: Number(matchup.defenseB.averageTaken.toFixed(3)),
+    teamATypes: matchup.teamA.types,
+    teamBTypes: matchup.teamB.types,
+  };
 }
 
 function teamRating(team) {
@@ -305,6 +559,8 @@ function generateRoundRobinSchedule() {
         teamBIdx,
         ratingA: teamRating(teams[teamAIdx]),
         ratingB: teamRating(teams[teamBIdx]),
+        matchup: compactMatchupProfile(gameMatchupProfile(teamAIdx, teamBIdx)),
+        matchupScore: null,
         scoreA: null,
         scoreB: null,
         winnerIdx: null,
@@ -400,6 +656,8 @@ function syncRegularSeasonResults() {
       scoreA: game.scoreA,
       scoreB: game.scoreB,
       winnerIdx: game.winnerIdx,
+      matchup: compactMatchupProfile(game.matchup),
+      matchupScore: compactMatchupScore(game.matchupScore),
     })),
   ];
   activeSeason.standings = buildRegularSeasonStandings(schedule);
@@ -409,16 +667,20 @@ function syncRegularSeasonResults() {
 function simulateGame(game) {
   if (game.simulated) return game;
 
-  const ratingA = teamRating(teams[game.teamAIdx]);
-  const ratingB = teamRating(teams[game.teamBIdx]);
-  const chanceA = ratingA / (ratingA + ratingB);
-  const winnerIdx = Math.random() < chanceA ? game.teamAIdx : game.teamBIdx;
+  const score = matchupScore(teams[game.teamAIdx], teams[game.teamBIdx]);
+  const ratingA = score.ratingA;
+  const ratingB = score.ratingB;
+  game.matchup = compactMatchupProfile(score.matchup);
+  game.matchupScore = compactMatchupScore(score);
+  const winnerIdx = Math.random() < score.chanceA ? game.teamAIdx : game.teamBIdx;
   const loserIdx = winnerIdx === game.teamAIdx ? game.teamBIdx : game.teamAIdx;
   const winnerRating = winnerIdx === game.teamAIdx ? ratingA : ratingB;
   const loserRating = loserIdx === game.teamAIdx ? ratingA : ratingB;
+  const winnerEdge = winnerIdx === game.teamAIdx ? score.edgeA : score.edgeB;
   const baseWinnerScore = 72 + Math.round(winnerRating / 45) + Math.floor(Math.random() * 24);
   const ratingGap = Math.max(-10, Math.min(18, Math.round((winnerRating - loserRating) / 80)));
-  const margin = Math.max(1, 4 + ratingGap + Math.floor(Math.random() * 14));
+  const matchupGap = Math.round(winnerEdge * 8);
+  const margin = Math.max(1, 4 + ratingGap + matchupGap + Math.floor(Math.random() * 14));
   const winnerScore = baseWinnerScore;
   const loserScore = Math.max(40, winnerScore - margin);
 
@@ -464,6 +726,8 @@ function playoffGameBase(id, round, label, teamAIdx, teamBIdx, sourceA = null, s
     sourceB,
     ratingA: Number.isInteger(teamAIdx) ? teamRating(teams[teamAIdx]) : null,
     ratingB: Number.isInteger(teamBIdx) ? teamRating(teams[teamBIdx]) : null,
+    matchup: compactMatchupProfile(gameMatchupProfile(teamAIdx, teamBIdx)),
+    matchupScore: null,
     scoreA: null,
     scoreB: null,
     winnerIdx: null,
@@ -508,6 +772,7 @@ function resolvePlayoffSources() {
     }
     game.ratingA = Number.isInteger(game.teamAIdx) ? teamRating(teams[game.teamAIdx]) : null;
     game.ratingB = Number.isInteger(game.teamBIdx) ? teamRating(teams[game.teamBIdx]) : null;
+    game.matchup = compactMatchupProfile(gameMatchupProfile(game.teamAIdx, game.teamBIdx));
   });
 }
 
