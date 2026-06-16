@@ -112,6 +112,59 @@
   </div>
 </div>
 
+<!-- ══════════════ REGULAR SEASON ══════════════ -->
+<div id="seasonScreen">
+  <div class="season-header-row">
+    <div class="season-title" id="seasonTitle">Regular Season</div>
+    <div class="season-sub" id="seasonSub">Round robin schedule</div>
+  </div>
+
+  <div class="season-layout">
+    <div class="season-main">
+      <div class="season-section-lbl">Standings</div>
+      <div class="season-standings" id="seasonStandings"></div>
+    </div>
+
+    <div class="season-side">
+      <div class="season-section-lbl">Schedule</div>
+      <div class="season-schedule" id="seasonSchedule"></div>
+    </div>
+  </div>
+
+  <div class="season-actions">
+    <button class="btn-season-primary" id="btnSimWeek" onclick="simulateNextWeek()">Simulate Week</button>
+    <button class="btn-season-secondary" id="btnSimAll" onclick="simulateAllSeason()">Simulate All</button>
+    <button class="btn-season-continue" id="btnSeasonContinue" onclick="continueAfterRegularSeason()">Continue</button>
+  </div>
+</div>
+
+<!-- ══════════════ PLAYOFFS ══════════════ -->
+<div id="playoffScreen">
+  <div class="playoff-header-row">
+    <div class="playoff-title" id="playoffTitle">Playoffs</div>
+    <div class="playoff-sub" id="playoffSub">Top seeds battle for the draft crown</div>
+  </div>
+
+  <div class="playoff-layout">
+    <div class="playoff-main">
+      <div class="playoff-section-lbl">Bracket</div>
+      <div class="playoff-bracket" id="playoffBracket"></div>
+    </div>
+
+    <div class="playoff-side">
+      <div class="playoff-section-lbl">Seeds</div>
+      <div class="playoff-seeds" id="playoffSeeds"></div>
+      <div class="playoff-champion" id="playoffChampion"></div>
+    </div>
+  </div>
+
+  <div class="playoff-actions">
+    <button class="btn-playoff-primary" id="btnSimPlayoffRound" onclick="simulateNextPlayoffRound()">Simulate Round</button>
+    <button class="btn-playoff-secondary" id="btnSimPlayoffsAll" onclick="simulateAllPlayoffs()">Simulate All</button>
+    <button class="btn-playoff-continue" id="btnPlayoffContinue" onclick="continueAfterPlayoffs()">Continue</button>
+  </div>
+</div>
+
 <!-- ══════════════ LOBBY ══════════════ -->
 <div id="lobbyScreen">
   <div class="lobby-header-row">
@@ -120,7 +173,7 @@
   </div>
 
   <div class="lobby-section">
-    <div class="lobby-section-lbl">Next Draft Order &nbsp;·&nbsp; worst BST picks first</div>
+    <div class="lobby-section-lbl">Next Draft Order &nbsp;·&nbsp; playoff finish, champion last</div>
     <div class="lobby-order-pills" id="lobbyOrderPills"></div>
   </div>
 
@@ -138,7 +191,7 @@
 <!-- ══════════════ COMPLETE ══════════════ -->
 <div id="completeScreen">
   <div class="comp-title">SEASON COMPLETE!</div>
-  <div class="comp-sub">Final Power Rankings by Total Base Stat</div>
+  <div class="comp-sub">Final Rankings by Playoff Finish</div>
   <div class="comp-grid" id="compGrid"></div>
   <button class="btn-restart" onclick="restart()">↺ &nbsp;NEW SEASON</button>
 </div>

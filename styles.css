@@ -491,6 +491,315 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 .mini-chip span { font-size: 11px; font-weight: 600; text-transform: capitalize; }
 .tt-empty { font-size: 11px; color: var(--muted); font-style: italic; }
 
+/* ═══════════ REGULAR SEASON ═══════════ */
+#seasonScreen {
+  display: none; flex-direction: column;
+  min-height: 100vh; padding: 42px 20px;
+  position: relative; z-index: 1; overflow-y: auto;
+}
+
+.season-header-row { text-align: center; margin-bottom: 32px; }
+
+.season-title {
+  font-family: 'Press Start 2P', monospace;
+  font-size: clamp(12px, 2vw, 18px); color: var(--yellow);
+  text-shadow: 2px 2px 0 var(--red); margin-bottom: 10px;
+}
+
+.season-sub {
+  color: var(--muted); font-size: 12px;
+  letter-spacing: 3px; text-transform: uppercase;
+}
+
+.season-layout {
+  width: 100%; max-width: 1400px; margin: 0 auto;
+  display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  gap: 18px; align-items: start;
+}
+
+.season-main, .season-side { min-width: 0; }
+
+.season-section-lbl {
+  font-size: 10px; font-weight: 700; letter-spacing: 3px;
+  text-transform: uppercase; color: var(--yellow); margin-bottom: 12px;
+}
+
+.season-standings, .season-schedule {
+  display: flex; flex-direction: column; gap: 8px;
+}
+
+.season-standing-row {
+  display: grid;
+  grid-template-columns: 28px 12px minmax(120px, 1fr) 58px 70px 70px 64px;
+  align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px;
+}
+
+.season-rank {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 9px; color: var(--yellow);
+}
+
+.season-team-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+  display: inline-block;
+}
+
+.season-team-name {
+  font-weight: 700; font-size: 14px;
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+}
+
+.season-record {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 9px; color: var(--text); text-align: right;
+}
+
+.season-stat {
+  font-size: 12px; color: var(--muted); text-align: right;
+}
+
+.season-rating {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px; color: var(--yellow); text-align: right;
+}
+
+.season-week {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+
+.season-week-title {
+  padding: 9px 12px; border-bottom: 1px solid var(--border);
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px; color: var(--yellow);
+}
+
+.season-game {
+  padding: 9px 12px; display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr);
+  align-items: center; gap: 8px;
+  border-bottom: 1px solid rgba(37,37,69,0.65);
+}
+
+.season-game:last-child { border-bottom: none; }
+.season-game.simulated { background: rgba(255,255,255,0.015); }
+
+.season-game-team {
+  display: grid; grid-template-columns: 10px minmax(0, 1fr) 34px;
+  align-items: center; gap: 7px;
+  font-size: 13px; color: var(--muted);
+}
+
+.season-game-team span:nth-child(2) {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.season-game-team strong {
+  color: var(--text); text-align: right;
+  font-family: 'Press Start 2P', monospace; font-size: 8px;
+}
+
+.season-game-team.winner { color: var(--text); font-weight: 700; }
+.season-game-team.winner strong { color: var(--yellow); }
+
+.season-game-vs {
+  text-align: center; color: var(--muted);
+  font-size: 10px; text-transform: uppercase;
+}
+
+.season-actions {
+  display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
+  width: 100%; max-width: 1400px; margin: 28px auto 0;
+}
+
+.btn-season-primary, .btn-season-secondary, .btn-season-continue {
+  padding: 14px 28px; border-radius: 10px;
+  font-family: 'Press Start 2P', monospace; font-size: 9px;
+  cursor: pointer; letter-spacing: 0.5px; transition: all 0.2s;
+}
+
+.btn-season-primary, .btn-season-continue {
+  background: var(--yellow); color: #000; border: none;
+}
+
+.btn-season-secondary {
+  background: transparent; color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.btn-season-primary:hover:not(:disabled),
+.btn-season-secondary:hover:not(:disabled),
+.btn-season-continue:hover:not(:disabled) {
+  filter: brightness(1.1); transform: translateY(-2px);
+}
+
+.btn-season-primary:disabled,
+.btn-season-secondary:disabled,
+.btn-season-continue:disabled {
+  opacity: 0.35; cursor: not-allowed; transform: none;
+}
+
+/* ═══════════ PLAYOFFS ═══════════ */
+#playoffScreen {
+  display: none; flex-direction: column;
+  min-height: 100vh; padding: 42px 20px;
+  position: relative; z-index: 1; overflow-y: auto;
+}
+
+.playoff-header-row { text-align: center; margin-bottom: 32px; }
+
+.playoff-title {
+  font-family: 'Press Start 2P', monospace;
+  font-size: clamp(12px, 2vw, 18px); color: var(--yellow);
+  text-shadow: 2px 2px 0 var(--red); margin-bottom: 10px;
+}
+
+.playoff-sub {
+  color: var(--muted); font-size: 12px;
+  letter-spacing: 3px; text-transform: uppercase;
+}
+
+.playoff-layout {
+  width: 100%; max-width: 1400px; margin: 0 auto;
+  display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.75fr);
+  gap: 18px; align-items: start;
+}
+
+.playoff-section-lbl {
+  font-size: 10px; font-weight: 700; letter-spacing: 3px;
+  text-transform: uppercase; color: var(--yellow); margin-bottom: 12px;
+}
+
+.playoff-bracket {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 14px; align-items: start;
+}
+
+.playoff-round, .playoff-seeds, .playoff-champion {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+
+.playoff-round-title {
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px; color: var(--yellow);
+}
+
+.playoff-game {
+  padding: 12px; border-bottom: 1px solid rgba(37,37,69,0.65);
+}
+
+.playoff-game:last-child { border-bottom: none; }
+.playoff-game.simulated { background: rgba(255,255,255,0.015); }
+
+.playoff-game-label {
+  font-size: 10px; font-weight: 700; color: var(--muted);
+  letter-spacing: 2px; text-transform: uppercase; margin-bottom: 8px;
+}
+
+.playoff-team {
+  display: grid; grid-template-columns: 22px 10px minmax(0, 1fr) 34px;
+  align-items: center; gap: 7px;
+  padding: 7px 8px; background: var(--surface2);
+  border-radius: 6px; margin-top: 5px;
+  font-size: 13px; color: var(--muted);
+}
+
+.playoff-team span:nth-child(3) {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.playoff-team strong {
+  color: var(--text); text-align: right;
+  font-family: 'Press Start 2P', monospace; font-size: 8px;
+}
+
+.playoff-team.winner {
+  color: var(--text); outline: 1px solid rgba(255,215,0,0.35);
+}
+
+.playoff-team.winner strong { color: var(--yellow); }
+
+.playoff-team-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+  display: inline-block;
+}
+
+.playoff-seed-num {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px; color: var(--yellow); text-align: center;
+}
+
+.playoff-seeds {
+  display: flex; flex-direction: column; margin-bottom: 14px;
+}
+
+.playoff-seed-row {
+  display: grid; grid-template-columns: 24px 10px minmax(0, 1fr) 44px;
+  align-items: center; gap: 8px; padding: 10px 12px;
+  border-bottom: 1px solid rgba(37,37,69,0.65);
+  font-size: 13px;
+}
+
+.playoff-seed-row:last-child { border-bottom: none; }
+
+.playoff-seed-row span:nth-child(3) {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.playoff-seed-row strong {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px; color: var(--text); text-align: right;
+}
+
+.playoff-champion { padding: 18px; }
+
+.playoff-champ-label {
+  font-size: 10px; font-weight: 700; color: var(--yellow);
+  letter-spacing: 3px; text-transform: uppercase; margin-bottom: 8px;
+}
+
+.playoff-champ-name {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 13px; line-height: 1.6; color: var(--text);
+}
+
+.playoff-actions {
+  display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
+  width: 100%; max-width: 1400px; margin: 28px auto 0;
+}
+
+.btn-playoff-primary, .btn-playoff-secondary, .btn-playoff-continue {
+  padding: 14px 28px; border-radius: 10px;
+  font-family: 'Press Start 2P', monospace; font-size: 9px;
+  cursor: pointer; letter-spacing: 0.5px; transition: all 0.2s;
+}
+
+.btn-playoff-primary, .btn-playoff-continue {
+  background: var(--yellow); color: #000; border: none;
+}
+
+.btn-playoff-secondary {
+  background: transparent; color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.btn-playoff-primary:hover:not(:disabled),
+.btn-playoff-secondary:hover:not(:disabled),
+.btn-playoff-continue:hover:not(:disabled) {
+  filter: brightness(1.1); transform: translateY(-2px);
+}
+
+.btn-playoff-primary:disabled,
+.btn-playoff-secondary:disabled,
+.btn-playoff-continue:disabled {
+  opacity: 0.35; cursor: not-allowed; transform: none;
+}
+
 /* ═══════════ COMPLETE ═══════════ */
 #completeScreen {
   display: none; flex-direction: column;
@@ -766,6 +1075,27 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   #lobbyScreen { padding: 28px 14px; }
   .lobby-standings-grid { grid-template-columns: 1fr; }
   .lobby-order-pills { gap: 6px; }
+
+  /* ── Regular season ── */
+  #seasonScreen { padding: 28px 14px; }
+  .season-layout { grid-template-columns: 1fr; gap: 20px; }
+  .season-standing-row {
+    grid-template-columns: 24px 10px minmax(88px, 1fr) 44px;
+  }
+  .season-stat, .season-rating { display: none; }
+  .season-actions { flex-direction: column; }
+  .btn-season-primary, .btn-season-secondary, .btn-season-continue {
+    width: 100%; padding: 16px;
+  }
+
+  /* ── Playoffs ── */
+  #playoffScreen { padding: 28px 14px; }
+  .playoff-layout { grid-template-columns: 1fr; gap: 20px; }
+  .playoff-bracket { grid-template-columns: 1fr; }
+  .playoff-actions { flex-direction: column; }
+  .btn-playoff-primary, .btn-playoff-secondary, .btn-playoff-continue {
+    width: 100%; padding: 16px;
+  }
 
   /* ── Complete ── */
   #completeScreen { padding: 28px 14px; }
