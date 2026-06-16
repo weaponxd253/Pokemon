@@ -61,9 +61,11 @@ let snakeOrder = [];
 let draftOrderIndices = [];  // team indices in pick order for current draft
 let currentGenIdx = 0;
 let draftNumber = 1;
-let curSort = 'bst-desc', curSearch = '', curType = '';
+let curSort = 'recommended', curSearch = '', curType = '';
 let cpuThinking = false;
 let season = null;
+let selectedBattleLogs = { season: null, playoff: null };
+let battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
 
 const SEASON_PHASES = {
   DRAFT: 'draft',
@@ -359,6 +361,258 @@ function compactMatchupScore(score) {
   };
 }
 
+function activePokemonByMetric(team, metric) {
+  const roster = getActiveRoster(team);
+  if (!roster.length) return null;
+  const valueFor = typeof metric === 'function'
+    ? metric
+    : (poke) => poke?.stats?.[metric] ?? 0;
+  return [...roster].sort((a, b) => valueFor(b) - valueFor(a))[0];
+}
+
+function pokemonDisplayName(poke) {
+  return poke?.name ? poke.name.replace(/-/g, ' ') : 'a key pick';
+}
+
+function teamBattleStyle(score, isTeamA) {
+  const profile = isTeamA ? score.matchup.teamA : score.matchup.teamB;
+  const components = score.components;
+  const signed = (key) => isTeamA ? components[key] : -components[key];
+  const strengths = [
+    { key: 'type', label: 'type coverage', value: signed('type') },
+    { key: 'speed', label: 'speed', value: signed('speed') },
+    { key: 'bulk', label: 'bulk', value: signed('bulk') },
+    { key: 'attack', label: 'finishing power', value: signed('attack') },
+    { key: 'diversity', label: 'type diversity', value: signed('diversity') },
+  ].sort((a, b) => b.value - a.value);
+  const best = strengths[0];
+  if (best?.value > 0.12) return best.label;
+  if (profile.speed >= 95) return 'tempo';
+  if (profile.bulk >= 230) return 'bulk';
+  return 'balance';
+}
+
+function primaryComponent(score, winnerIsA) {
+  const entries = Object.entries(score.components)
+    .map(([key, value]) => ({ key, value: winnerIsA ? value : -value }))
+    .sort((a, b) => b.value - a.value);
+  return entries[0] ?? { key: 'rating', value: 0 };
+}
+
+function battleEvent(id, kind, text, impact = 'medium', teamIdx = null, pokemonId = null) {
+  return { id, kind, text, impact, teamIdx, pokemonId };
+}
+
+function generateBattleLog(game, score, winnerIdx) {
+  if (game.sets?.length) return generateSetBattleLog(game, score, winnerIdx);
+
+  const teamA = teams[game.teamAIdx];
+  const teamB = teams[game.teamBIdx];
+  const winner = teams[winnerIdx];
+  const loserIdx = winnerIdx === game.teamAIdx ? game.teamBIdx : game.teamAIdx;
+  const loser = teams[loserIdx];
+  const winnerIsA = winnerIdx === game.teamAIdx;
+  const winnerChance = winnerIsA ? score.chanceA : score.chanceB;
+  const typeEdge = winnerIsA ? score.matchup.typeEdgeA : score.matchup.typeEdgeB;
+  const component = primaryComponent(score, winnerIsA);
+  const anchor = activePokemonByMetric(winner, (poke) => pokemonPower(poke));
+  const speedster = activePokemonByMetric(winner, 'speed');
+  const tank = activePokemonByMetric(winner, (poke) =>
+    (poke?.stats?.hp ?? 0) + (poke?.stats?.defense ?? 0) + (poke?.stats?.['special-defense'] ?? 0));
+  const style = teamBattleStyle(score, winnerIsA);
+  const edgeText = typeEdge > 0.25
+    ? `${winner.name} found favorable type pressure into ${loser.name}.`
+    : typeEdge < -0.25
+      ? `${winner.name} overcame an awkward type matchup against ${loser.name}.`
+      : `${teamA.name} and ${teamB.name} entered with a fairly even type spread.`;
+  const componentText = {
+    rating: `${winner.name}'s active roster carried the stronger overall profile.`,
+    type: `${winner.name}'s type map created the cleanest openings.`,
+    speed: `${winner.name} controlled tempo through speed.`,
+    bulk: `${winner.name} absorbed pressure better in the middle stretch.`,
+    attack: `${winner.name} had more reliable finishing power.`,
+    mixedAttack: `${winner.name} kept pressure balanced between physical and special threats.`,
+    diversity: `${winner.name}'s broader type mix gave them more answers.`,
+  }[component.key] ?? `${winner.name} found the better matchup shape.`;
+
+  return [
+    battleEvent('preview', 'preview',
+      `${teamA.name} entered at ${Math.round(score.chanceA * 100)}% odds; ${teamB.name} entered at ${Math.round(score.chanceB * 100)}%.`,
+      'low'),
+    battleEvent('type-edge', 'type-edge', edgeText, Math.abs(typeEdge) > 0.35 ? 'high' : 'medium', winnerIdx),
+    battleEvent('profile-edge', 'stat-edge', componentText, component.value > 0.2 ? 'high' : 'medium', winnerIdx),
+    battleEvent('swing', 'swing',
+      `${pokemonDisplayName(speedster)} helped ${winner.name} play through ${style}.`,
+      'medium', winnerIdx, speedster?.id ?? null),
+    battleEvent('anchor', 'swing',
+      `${pokemonDisplayName(tank)} stabilized the matchup while ${pokemonDisplayName(anchor)} gave ${winner.name} a closing threat.`,
+      'medium', winnerIdx, anchor?.id ?? null),
+    battleEvent('finish', 'finish',
+      `${winner.name} defeated ${loser.name} ${winnerIdx === game.teamAIdx ? game.scoreA : game.scoreB}-${winnerIdx === game.teamAIdx ? game.scoreB : game.scoreA}.`,
+      winnerChance < 0.45 ? 'high' : 'medium', winnerIdx),
+  ];
+}
+
+function bestTypeMultiplier(attacker, defender) {
+  const attackingTypes = attacker?.types ?? [];
+  if (!attackingTypes.length || !defender?.types?.length) return { type: null, multiplier: 1 };
+  return attackingTypes
+    .map(type => ({ type, multiplier: typeEffectiveness(type, defender.types) }))
+    .sort((a, b) => b.multiplier - a.multiplier)[0];
+}
+
+function skirmishStatScore(poke, typeMultiplier) {
+  const bestAttack = Math.max(poke?.stats?.attack ?? 0, poke?.stats?.['special-attack'] ?? 0);
+  const bulk = (poke?.stats?.hp ?? 0) + (poke?.stats?.defense ?? 0) + (poke?.stats?.['special-defense'] ?? 0);
+  const speed = poke?.stats?.speed ?? 0;
+  const bst = poke?.bst ?? 0;
+  const typeBonus = typeMultiplier === 0
+    ? -90
+    : typeMultiplier >= 4
+      ? 120
+      : typeMultiplier > 1
+        ? 70
+        : typeMultiplier < 1
+          ? -45
+          : 0;
+
+  return bst * 0.45 + speed * 0.18 + bestAttack * 0.18 + bulk * 0.12 + typeBonus;
+}
+
+function skirmishReason(winnerPoke, loserPoke, winnerType, loserType, winnerScore, loserScore) {
+  const winnerName = pokemonDisplayName(winnerPoke);
+  const loserName = pokemonDisplayName(loserPoke);
+  if (winnerType.multiplier >= 4) {
+    return `${winnerName} overwhelmed ${loserName} with a 4x ${winnerType.type} matchup.`;
+  }
+  if (winnerType.multiplier > 1 && winnerType.multiplier > loserType.multiplier) {
+    return `${winnerName} exploited a ${winnerType.type} advantage into ${loserName}.`;
+  }
+  if (loserType.multiplier > winnerType.multiplier) {
+    return `${winnerName} survived the worse type chart and won on stats.`;
+  }
+  const speedGap = (winnerPoke?.stats?.speed ?? 0) - (loserPoke?.stats?.speed ?? 0);
+  if (speedGap >= 25) return `${winnerName} moved first and kept ${loserName} under pressure.`;
+  const bulkGap = ((winnerPoke?.stats?.hp ?? 0) + (winnerPoke?.stats?.defense ?? 0) + (winnerPoke?.stats?.['special-defense'] ?? 0)) -
+    ((loserPoke?.stats?.hp ?? 0) + (loserPoke?.stats?.defense ?? 0) + (loserPoke?.stats?.['special-defense'] ?? 0));
+  if (bulkGap >= 55) return `${winnerName} outlasted ${loserName} through bulk.`;
+  if (winnerScore - loserScore <= 18) return `${winnerName} edged ${loserName} in a tight exchange.`;
+  return `${winnerName} beat ${loserName} with the cleaner overall profile.`;
+}
+
+function simulateSkirmish(pokeA, pokeB, teamAIdx, teamBIdx, setNumber) {
+  const typeA = bestTypeMultiplier(pokeA, pokeB);
+  const typeB = bestTypeMultiplier(pokeB, pokeA);
+  const baseA = skirmishStatScore(pokeA, typeA.multiplier);
+  const baseB = skirmishStatScore(pokeB, typeB.multiplier);
+  const rollA = baseA + (Math.random() - 0.5) * 55;
+  const rollB = baseB + (Math.random() - 0.5) * 55;
+  const winnerIdx = rollA >= rollB ? teamAIdx : teamBIdx;
+  const winnerPokemon = winnerIdx === teamAIdx ? pokeA : pokeB;
+  const loserPokemon = winnerIdx === teamAIdx ? pokeB : pokeA;
+  const winnerType = winnerIdx === teamAIdx ? typeA : typeB;
+  const loserType = winnerIdx === teamAIdx ? typeB : typeA;
+  const winnerScore = winnerIdx === teamAIdx ? rollA : rollB;
+  const loserScore = winnerIdx === teamAIdx ? rollB : rollA;
+
+  return {
+    id: `set-${setNumber}`,
+    setNumber,
+    teamAIdx,
+    teamBIdx,
+    pokemonAId: pokeA.id,
+    pokemonBId: pokeB.id,
+    pokemonAName: pokeA.name,
+    pokemonBName: pokeB.name,
+    typeMultiplierA: Number(typeA.multiplier.toFixed(2)),
+    typeMultiplierB: Number(typeB.multiplier.toFixed(2)),
+    statEdgeA: Math.round(baseA - baseB),
+    statEdgeB: Math.round(baseB - baseA),
+    scoreA: Math.round(rollA),
+    scoreB: Math.round(rollB),
+    winnerIdx,
+    winnerPokemonId: winnerPokemon.id,
+    winnerPokemonName: winnerPokemon.name,
+    reason: skirmishReason(winnerPokemon, loserPokemon, winnerType, loserType, winnerScore, loserScore),
+  };
+}
+
+function simulateSets(game) {
+  const rosterA = shuffleArray(getActiveRoster(teams[game.teamAIdx]));
+  const rosterB = shuffleArray(getActiveRoster(teams[game.teamBIdx]));
+  if (!rosterA.length || !rosterB.length) {
+    return {
+      sets: [],
+      scoreA: 0,
+      scoreB: 0,
+      winnerIdx: game.teamAIdx,
+    };
+  }
+  const sets = [];
+  let winsA = 0;
+  let winsB = 0;
+
+  for (let i = 0; i < 5 && winsA < 3 && winsB < 3; i++) {
+    const pokeA = rosterA[i % rosterA.length];
+    const pokeB = rosterB[i % rosterB.length];
+    const set = simulateSkirmish(pokeA, pokeB, game.teamAIdx, game.teamBIdx, i + 1);
+    sets.push(set);
+    if (set.winnerIdx === game.teamAIdx) winsA++;
+    else winsB++;
+  }
+
+  return {
+    sets,
+    scoreA: winsA,
+    scoreB: winsB,
+    winnerIdx: winsA > winsB ? game.teamAIdx : game.teamBIdx,
+  };
+}
+
+function generateSetBattleLog(game, score, winnerIdx) {
+  const teamA = teams[game.teamAIdx];
+  const teamB = teams[game.teamBIdx];
+  const winner = teams[winnerIdx];
+  const loser = teams[winnerIdx === game.teamAIdx ? game.teamBIdx : game.teamAIdx];
+  const winnerChance = winnerIdx === game.teamAIdx ? score.chanceA : score.chanceB;
+  const logs = [
+    battleEvent('preview', 'preview',
+      `${teamA.name} entered at ${Math.round(score.chanceA * 100)}% odds; ${teamB.name} entered at ${Math.round(score.chanceB * 100)}%.`,
+      'low'),
+  ];
+
+  game.sets.forEach(set => {
+    logs.push(battleEvent(
+      set.id,
+      set.winnerIdx === winnerIdx ? 'skirmish-win' : 'skirmish-loss',
+      `Skirmish ${set.setNumber}: ${set.reason}`,
+      set.winnerIdx === winnerIdx ? 'medium' : 'low',
+      set.winnerIdx,
+      set.winnerPokemonId
+    ));
+  });
+
+  logs.push(battleEvent('finish', 'finish',
+    `${winner.name} defeated ${loser.name} ${game.scoreA}-${game.scoreB} in ${game.sets.length} skirmishes.`,
+    winnerChance < 0.45 ? 'high' : 'medium', winnerIdx));
+  return logs;
+}
+
+function ensureBattleLog(game) {
+  if (!game?.simulated) return game;
+  if (game.battleLog?.length) return game;
+  if (!Number.isInteger(game.teamAIdx) || !Number.isInteger(game.teamBIdx) || !Number.isInteger(game.winnerIdx)) {
+    game.battleLog = [];
+    return game;
+  }
+
+  const score = matchupScore(teams[game.teamAIdx], teams[game.teamBIdx]);
+  game.matchup = compactMatchupProfile(score.matchup);
+  game.matchupScore = compactMatchupScore(score);
+  game.battleLog = generateBattleLog(game, score, game.winnerIdx);
+  return game;
+}
+
 function compactMatchupProfile(matchup) {
   if (!matchup) return null;
   if (typeof matchup.offenseA === 'number') return matchup;
@@ -561,6 +815,8 @@ function generateRoundRobinSchedule() {
         ratingB: teamRating(teams[teamBIdx]),
         matchup: compactMatchupProfile(gameMatchupProfile(teamAIdx, teamBIdx)),
         matchupScore: null,
+        battleLog: [],
+        sets: [],
         scoreA: null,
         scoreB: null,
         winnerIdx: null,
@@ -646,19 +902,24 @@ function syncRegularSeasonResults() {
   const schedule = getCurrentDraftSchedule();
   activeSeason.results = [
     ...(activeSeason.results ?? []).filter(result => result.draftId !== draftNumber),
-    ...schedule.filter(game => game.simulated).map(game => ({
-      id: game.id,
-      draftId: game.draftId,
-      genIdx: game.genIdx,
-      week: game.week,
-      teamAIdx: game.teamAIdx,
-      teamBIdx: game.teamBIdx,
-      scoreA: game.scoreA,
-      scoreB: game.scoreB,
-      winnerIdx: game.winnerIdx,
-      matchup: compactMatchupProfile(game.matchup),
-      matchupScore: compactMatchupScore(game.matchupScore),
-    })),
+    ...schedule.filter(game => game.simulated).map(game => {
+      ensureBattleLog(game);
+      return {
+        id: game.id,
+        draftId: game.draftId,
+        genIdx: game.genIdx,
+        week: game.week,
+        teamAIdx: game.teamAIdx,
+        teamBIdx: game.teamBIdx,
+        scoreA: game.scoreA,
+        scoreB: game.scoreB,
+        winnerIdx: game.winnerIdx,
+        matchup: compactMatchupProfile(game.matchup),
+        matchupScore: compactMatchupScore(game.matchupScore),
+        battleLog: game.battleLog ?? [],
+        sets: game.sets ?? [],
+      };
+    }),
   ];
   activeSeason.standings = buildRegularSeasonStandings(schedule);
   activeSeason.nextDraftOrder = computeNextDraftOrder();
@@ -672,23 +933,15 @@ function simulateGame(game) {
   const ratingB = score.ratingB;
   game.matchup = compactMatchupProfile(score.matchup);
   game.matchupScore = compactMatchupScore(score);
-  const winnerIdx = Math.random() < score.chanceA ? game.teamAIdx : game.teamBIdx;
-  const loserIdx = winnerIdx === game.teamAIdx ? game.teamBIdx : game.teamAIdx;
-  const winnerRating = winnerIdx === game.teamAIdx ? ratingA : ratingB;
-  const loserRating = loserIdx === game.teamAIdx ? ratingA : ratingB;
-  const winnerEdge = winnerIdx === game.teamAIdx ? score.edgeA : score.edgeB;
-  const baseWinnerScore = 72 + Math.round(winnerRating / 45) + Math.floor(Math.random() * 24);
-  const ratingGap = Math.max(-10, Math.min(18, Math.round((winnerRating - loserRating) / 80)));
-  const matchupGap = Math.round(winnerEdge * 8);
-  const margin = Math.max(1, 4 + ratingGap + matchupGap + Math.floor(Math.random() * 14));
-  const winnerScore = baseWinnerScore;
-  const loserScore = Math.max(40, winnerScore - margin);
+  const setResult = simulateSets(game);
 
   game.ratingA = ratingA;
   game.ratingB = ratingB;
-  game.winnerIdx = winnerIdx;
-  game.scoreA = winnerIdx === game.teamAIdx ? winnerScore : loserScore;
-  game.scoreB = winnerIdx === game.teamBIdx ? winnerScore : loserScore;
+  game.sets = setResult.sets;
+  game.winnerIdx = setResult.winnerIdx;
+  game.scoreA = setResult.scoreA;
+  game.scoreB = setResult.scoreB;
+  game.battleLog = generateBattleLog(game, score, setResult.winnerIdx);
   game.simulated = true;
   return game;
 }
@@ -728,6 +981,8 @@ function playoffGameBase(id, round, label, teamAIdx, teamBIdx, sourceA = null, s
     ratingB: Number.isInteger(teamBIdx) ? teamRating(teams[teamBIdx]) : null,
     matchup: compactMatchupProfile(gameMatchupProfile(teamAIdx, teamBIdx)),
     matchupScore: null,
+    battleLog: [],
+    sets: [],
     scoreA: null,
     scoreB: null,
     winnerIdx: null,
@@ -949,6 +1204,7 @@ async function startDraft() {
   currentPickInRound = 0;
   draftedIds = new Set();
   season = null;
+  selectedBattleLogs = { season: null, playoff: null };
   numTeams = Math.min(MAX_TEAMS, parseInt(document.getElementById('numTeamsRange').value));
   numRounds = DRAFT_ROUNDS;
   updateRounds();
@@ -1086,6 +1342,246 @@ function buildSnakeOrder() {
 function currentPickNum() { return currentRound * numTeams + currentPickInRound; }
 function currentTeamIdx() { return snakeOrder[currentPickNum()]; }
 
+function average(values) {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+}
+
+function pokemonAttackScore(poke) {
+  return Math.max(poke?.stats?.attack ?? 0, poke?.stats?.['special-attack'] ?? 0);
+}
+
+function pokemonBulkScore(poke) {
+  return (poke?.stats?.hp ?? 0) + (poke?.stats?.defense ?? 0) + (poke?.stats?.['special-defense'] ?? 0);
+}
+
+function draftTeamWeaknesses(team) {
+  const roster = team?.picks ?? [];
+  if (!roster.length) return [];
+
+  return Object.keys(TYPE_CHART)
+    .map(type => ({
+      type,
+      multiplier: average(roster.map(poke => typeEffectiveness(type, poke.types))),
+    }))
+    .filter(entry => entry.multiplier > 1.12)
+    .sort((a, b) => b.multiplier - a.multiplier);
+}
+
+function draftRoleNeeds(team) {
+  const roster = team?.picks ?? [];
+  if (!roster.length) {
+    return { speed: 0.65, offense: 0.65, bulk: 0.65 };
+  }
+
+  return {
+    speed: clamp((92 - average(roster.map(p => p.stats?.speed ?? 0))) / 62, 0, 1),
+    offense: clamp((100 - average(roster.map(pokemonAttackScore))) / 64, 0, 1),
+    bulk: clamp((255 - average(roster.map(pokemonBulkScore))) / 118, 0, 1),
+  };
+}
+
+function draftTypeScarcity(poke, available) {
+  const typeCounts = poke.types.map(type =>
+    available.filter(candidate => candidate.types.includes(type)).length);
+  if (!typeCounts.length) return 0;
+  return average(typeCounts.map(count => clamp((8 - count) / 7, 0, 1))) * 100;
+}
+
+function draftRecommendationScore(poke, team = teams[currentTeamIdx()]) {
+  const available = allPokemon.filter(candidate => !draftedIds.has(candidate.id));
+  const ownedTypes = new Set((team?.picks ?? []).flatMap(p => p.types));
+  const newTypes = poke.types.filter(type => !ownedTypes.has(type));
+  const weaknesses = draftTeamWeaknesses(team);
+  const roleNeeds = draftRoleNeeds(team);
+  const weaknessCovers = weaknesses.filter(weakness => typeEffectiveness(weakness.type, poke.types) < 1);
+  const speedFit = clamp(((poke.stats?.speed ?? 0) - 55) / 75, 0, 1);
+  const offenseFit = clamp((pokemonAttackScore(poke) - 65) / 75, 0, 1);
+  const bulkFit = clamp((pokemonBulkScore(poke) - 190) / 150, 0, 1);
+  const roleFits = {
+    speed: speedFit * roleNeeds.speed,
+    offense: offenseFit * roleNeeds.offense,
+    bulk: bulkFit * roleNeeds.bulk,
+  };
+  const bestRole = Object.entries(roleFits).sort((a, b) => b[1] - a[1])[0] ?? ['balance', 0];
+
+  const powerScore = clamp(((poke.bst ?? 0) - 300) / 320, 0, 1) * 100;
+  const typeFitScore = poke.types.length ? (newTypes.length / poke.types.length) * 100 : 0;
+  const roleScore = average(Object.values(roleFits)) * 100;
+  const weaknessScore = weaknesses.length ? clamp(weaknessCovers.length / Math.min(3, weaknesses.length), 0, 1) * 100 : 45;
+  const scarcityScore = draftTypeScarcity(poke, available);
+  const score = clamp(
+    powerScore * 0.48 +
+    typeFitScore * 0.18 +
+    roleScore * 0.16 +
+    weaknessScore * 0.12 +
+    scarcityScore * 0.06,
+    0,
+    100
+  );
+
+  const reason = weaknessCovers.length
+    ? `Covers ${weaknessCovers[0].type}`
+    : newTypes.length
+      ? `Adds ${newTypes.slice(0, 2).join('/')}`
+      : bestRole[1] > 0.18
+        ? `Need: ${bestRole[0]}`
+        : powerScore >= 70
+          ? 'Power pick'
+          : 'Depth fit';
+
+  return {
+    score: Math.round(score),
+    reason,
+    newTypes,
+    weaknessCovers: weaknessCovers.map(entry => entry.type),
+    bestRole: bestRole[0],
+    components: {
+      power: Math.round(powerScore),
+      typeFit: Math.round(typeFitScore),
+      role: Math.round(roleScore),
+      weakness: Math.round(weaknessScore),
+      scarcity: Math.round(scarcityScore),
+    },
+  };
+}
+
+function recommendationTitle(rec) {
+  return `Fit ${rec.score} | Power ${rec.components.power} | Type ${rec.components.typeFit} | Role ${rec.components.role} | Coverage ${rec.components.weakness} | Scarcity ${rec.components.scarcity}`;
+}
+
+function availablePokemon() {
+  return allPokemon.filter(poke => !draftedIds.has(poke.id));
+}
+
+function getTopRecommendations(team, count = 3) {
+  return availablePokemon()
+    .map(poke => ({ poke, rec: draftRecommendationScore(poke, team) }))
+    .sort((a, b) => b.rec.score - a.rec.score || b.poke.bst - a.poke.bst || a.poke.id - b.poke.id)
+    .slice(0, count);
+}
+
+function labelFromKey(key) {
+  return key ? key[0].toUpperCase() + key.slice(1) : 'None';
+}
+
+function getPrimaryDraftNeed(team) {
+  const picks = team?.picks ?? [];
+  if (!picks.length) return 'core';
+
+  const roleNeeds = draftRoleNeeds(team);
+  const strongestRole = Object.entries(roleNeeds).sort((a, b) => b[1] - a[1])[0] ?? ['balance', 0];
+  const ownedTypes = new Set(picks.flatMap(p => p.types));
+  if (strongestRole[1] >= 0.35) return strongestRole[0];
+  if (ownedTypes.size < Math.min(8, picks.length * 2)) return 'coverage';
+  return 'balance';
+}
+
+function getTargetTypesForWeakness(team, limit = 3) {
+  const weaknesses = draftTeamWeaknesses(team);
+  const mainWeakness = weaknesses[0];
+  if (!mainWeakness) return [];
+
+  const ownedTypes = new Set((team?.picks ?? []).flatMap(p => p.types));
+  return Object.keys(TYPE_CHART)
+    .filter(type => !ownedTypes.has(type))
+    .map(type => ({
+      type,
+      multiplier: typeEffectiveness(mainWeakness.type, [type]),
+    }))
+    .filter(entry => entry.multiplier < 1)
+    .sort((a, b) => a.multiplier - b.multiplier)
+    .slice(0, limit)
+    .map(entry => entry.type);
+}
+
+function getTeamNeedsSummary(team) {
+  const topPicks = getTopRecommendations(team, 3);
+  const weakness = draftTeamWeaknesses(team)[0] ?? null;
+  return {
+    primaryNeed: getPrimaryDraftNeed(team),
+    weakness,
+    targetTypes: getTargetTypesForWeakness(team),
+    topPick: topPicks[0] ?? null,
+    topPicks,
+  };
+}
+
+function renderDraftAssistant() {
+  const panel = document.getElementById('draftAssistant');
+  if (!panel) return;
+
+  if (currentRound >= numRounds || !teams.length || !availablePokemon().length) {
+    panel.innerHTML = `
+      <div class="da-label">Draft Assistant</div>
+      <div class="da-empty">Draft complete</div>
+    `;
+    return;
+  }
+
+  const team = teams[currentTeamIdx()];
+  if (!team) {
+    panel.innerHTML = '';
+    return;
+  }
+
+  const summary = getTeamNeedsSummary(team);
+  const topPick = summary.topPick;
+  const pickLabel = `Round ${currentRound + 1} · Pick ${currentPickInRound + 1}`;
+  const weaknessText = summary.weakness
+    ? labelFromKey(summary.weakness.type)
+    : team.picks.length ? 'Stable' : 'None yet';
+  const targetTypes = summary.targetTypes.length
+    ? summary.targetTypes
+    : topPick?.rec.newTypes.slice(0, 3) ?? [];
+
+  panel.innerHTML = `
+    <div class="da-label">Draft Assistant</div>
+    <div class="da-team-row">
+      <span class="da-team-dot" style="background:${team.color}"></span>
+      <span>${team.name}${team.isCpu ? ' (CPU)' : ''}</span>
+      <strong>${pickLabel}</strong>
+    </div>
+    ${topPick ? `
+      <div class="da-best">
+        <img src="${topPick.poke.sprite}" alt="${topPick.poke.name}" onerror="this.style.visibility='hidden'">
+        <div class="da-best-main">
+          <div class="da-best-label">Best Pick</div>
+          <div class="da-best-name">${pokemonDisplayName(topPick.poke)}</div>
+          <div class="da-best-reason">${topPick.rec.reason}</div>
+        </div>
+        <div class="da-fit">${topPick.rec.score}</div>
+      </div>
+    ` : '<div class="da-empty">No available picks</div>'}
+    <div class="da-needs-grid">
+      <div class="da-need-block">
+        <span>Need</span>
+        <strong>${labelFromKey(summary.primaryNeed)}</strong>
+      </div>
+      <div class="da-need-block">
+        <span>Weakness</span>
+        <strong>${weaknessText}</strong>
+      </div>
+    </div>
+    <div class="da-targets">
+      <span>Targets</span>
+      <div>
+        ${targetTypes.length
+          ? targetTypes.map(type => `<b style="background:${TYPE_COLORS[type] || '#888888'};color:${isLight(TYPE_COLORS[type] || '#888888') ? '#000' : '#fff'}">${type}</b>`).join('')
+          : '<em>Power and balance</em>'}
+      </div>
+    </div>
+    <div class="da-top-list">
+      ${summary.topPicks.map((entry, idx) => `
+        <div class="da-top-row">
+          <span>${idx + 1}</span>
+          <strong>${pokemonDisplayName(entry.poke)}</strong>
+          <b>${entry.rec.score}</b>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
 // ── CPU Logic ──
 function cpuScore(poke, team) {
   const typesOwned = new Set(team.picks.flatMap(p => p.types));
@@ -1119,6 +1615,7 @@ function setCpuThinking(on) {
   } else {
     picker.classList.remove('thinking');
   }
+  renderDraftAssistant();
 }
 
 function triggerCpuIfNeeded() {
@@ -1200,7 +1697,19 @@ function getDisplayList() {
     list = list.filter(p => p.name.includes(q) || String(p.id).includes(q));
   }
   if (curType) list = list.filter(p => p.types.includes(curType));
-  if (curSort === 'bst-desc')     list.sort((a, b) => b.bst - a.bst);
+  if (curSort === 'recommended') {
+    const team = teams[currentTeamIdx()];
+    list.sort((a, b) => {
+      const draftedA = draftedIds.has(a.id);
+      const draftedB = draftedIds.has(b.id);
+      if (draftedA !== draftedB) return draftedA ? 1 : -1;
+      if (!team) return b.bst - a.bst;
+      const scoreB = draftRecommendationScore(b, team).score;
+      const scoreA = draftRecommendationScore(a, team).score;
+      return scoreB - scoreA || b.bst - a.bst || a.id - b.id;
+    });
+  }
+  else if (curSort === 'bst-desc')     list.sort((a, b) => b.bst - a.bst);
   else if (curSort === 'bst-asc') list.sort((a, b) => a.bst - b.bst);
   else if (curSort === 'name')    list.sort((a, b) => a.name.localeCompare(b.name));
   else                            list.sort((a, b) => a.id - b.id);
@@ -1211,18 +1720,22 @@ function refreshGrid() {
   const grid = document.getElementById('pokeGrid');
   grid.innerHTML = '';
   getDisplayList().forEach(poke => {
+    const isDrafted = draftedIds.has(poke.id);
+    const rec = isDrafted ? null : draftRecommendationScore(poke);
     const card = document.createElement('div');
-    card.className = 'poke-card' + (draftedIds.has(poke.id) ? ' drafted' : '');
+    card.className = 'poke-card' + (isDrafted ? ' drafted' : '') + (rec?.score >= 82 ? ' recommended-pick' : '');
     card.dataset.id = poke.id;
     card.innerHTML = `
+      ${rec ? `<div class="pc-fit" title="${recommendationTitle(rec)}"><span>Fit</span><strong>${rec.score}</strong></div>` : ''}
       <img src="${poke.sprite}" alt="${poke.name}" onerror="this.style.visibility='hidden'">
       <div class="pc-num">#${String(poke.id).padStart(3, '0')}</div>
       <div class="pc-name">${poke.name}</div>
       <div class="pc-types">${typePills(poke.types)}</div>
+      ${rec ? `<div class="pc-rec-reason">${rec.reason}</div>` : ''}
       <div class="pc-bst-lbl">BASE STAT TOTAL</div>
       <div class="pc-bst">${poke.bst}</div>
     `;
-    if (!draftedIds.has(poke.id)) {
+    if (!isDrafted) {
       card.addEventListener('click', () => {
         if (cpuThinking) return;
         draftPokemon(poke);
@@ -1233,6 +1746,7 @@ function refreshGrid() {
 }
 
 function refreshTeams() {
+  renderDraftAssistant();
   const list = document.getElementById('teamsList');
   list.innerHTML = '';
   const curIdx = currentTeamIdx();
@@ -1297,6 +1811,7 @@ function draftPokemon(poke) {
 
   refreshHeader();
   refreshSnakeBar();
+  refreshGrid();
   refreshTeams();
   flashRosterTab();
   saveSeason(buildSeasonState(SEASON_PHASES.DRAFT, 'inProgress'));
@@ -1421,6 +1936,244 @@ function continueAfterRosterLock() {
   showSeasonScreen();
 }
 
+// ── Battle Logs ──
+function battleLogGames(scope) {
+  return scope === 'playoff' ? getCurrentPlayoffGames() : getCurrentDraftSchedule();
+}
+
+function getSelectedBattleLogGame(scope) {
+  const games = battleLogGames(scope);
+  const selected = games.find(game => game.id === selectedBattleLogs[scope] && game.simulated);
+  if (selected) return selected;
+
+  const latest = [...games].reverse().find(game => game.simulated);
+  selectedBattleLogs[scope] = latest?.id ?? null;
+  return latest ?? null;
+}
+
+function selectBattleLog(scope, gameId) {
+  selectedBattleLogs[scope] = gameId;
+  if (scope === 'playoff') renderPlayoffScreen();
+  else renderSeasonScreen();
+}
+
+function renderBattleLogPanel(panelId, game, scope) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+
+  if (!game?.simulated) {
+    panel.innerHTML = `
+      <div class="battle-log-empty">
+        <div class="battle-log-title">Battle Log</div>
+        <div class="battle-log-sub">Simulate a completed matchup to review its key swings.</div>
+      </div>
+    `;
+    return;
+  }
+
+  ensureBattleLog(game);
+  const teamA = teams[game.teamAIdx];
+  const teamB = teams[game.teamBIdx];
+  const winner = teams[game.winnerIdx];
+  const events = game.battleLog ?? [];
+  const sets = game.sets ?? [];
+  panel.innerHTML = `
+    <div class="battle-log-title">${teamA.name} ${game.scoreA} · ${teamB.name} ${game.scoreB}</div>
+    <div class="battle-log-sub">${winner.name} wins · ${sets.length || events.length} ${sets.length ? 'skirmishes' : 'events'}</div>
+    ${sets.length && scope ? `
+      <div class="battle-log-actions">
+        <button class="btn-watch-battle" onclick="openBattlePlayback('${scope}', '${game.id}')">Watch Battle</button>
+      </div>
+    ` : ''}
+    ${sets.length ? `
+      <div class="battle-sets">
+        ${sets.map(set => {
+          return `
+            <div class="battle-set ${set.winnerIdx === game.teamAIdx ? 'team-a' : 'team-b'}">
+              <div class="battle-set-num">${set.setNumber}</div>
+              <div class="battle-set-matchup">
+                <span>${pokemonDisplayName({ name: set.pokemonAName })}</span>
+                <strong>vs</strong>
+                <span>${pokemonDisplayName({ name: set.pokemonBName })}</span>
+              </div>
+              <div class="battle-set-winner">${pokemonDisplayName({ name: set.winnerPokemonName })}</div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    ` : ''}
+    <div class="battle-events">
+      ${events.map(event => `
+        <div class="battle-event ${event.kind} ${event.impact}">
+          <div class="battle-event-kind">${event.kind.replace(/-/g, ' ')}</div>
+          <div class="battle-event-text">${event.text}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function pokemonSpriteUrl(id) {
+  return Number.isInteger(id)
+    ? `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`
+    : '';
+}
+
+function findBattlePlaybackGame(scope, gameId) {
+  return battleLogGames(scope).find(game => game.id === gameId && game.simulated) ?? null;
+}
+
+function buildPlaybackSteps(game) {
+  let scoreA = 0;
+  let scoreB = 0;
+  return (game.sets ?? []).map(set => {
+    if (set.winnerIdx === game.teamAIdx) scoreA++;
+    else scoreB++;
+
+    return {
+      ...set,
+      scoreA,
+      scoreB,
+      pokemonANameDisplay: pokemonDisplayName({ name: set.pokemonAName }),
+      pokemonBNameDisplay: pokemonDisplayName({ name: set.pokemonBName }),
+      winnerPokemonNameDisplay: pokemonDisplayName({ name: set.winnerPokemonName }),
+    };
+  });
+}
+
+function clearBattlePlaybackTimer() {
+  if (battlePlayback.timer) clearInterval(battlePlayback.timer);
+  battlePlayback.timer = null;
+  battlePlayback.playing = false;
+}
+
+function currentBattlePlaybackGame() {
+  if (!battlePlayback.scope || !battlePlayback.gameId) return null;
+  return findBattlePlaybackGame(battlePlayback.scope, battlePlayback.gameId);
+}
+
+function currentBattlePlaybackSteps() {
+  const game = currentBattlePlaybackGame();
+  return game ? buildPlaybackSteps(game) : [];
+}
+
+function openBattlePlayback(scope, gameId) {
+  const game = findBattlePlaybackGame(scope, gameId);
+  if (!game?.sets?.length) return;
+
+  clearBattlePlaybackTimer();
+  battlePlayback = { scope, gameId, stepIdx: 0, playing: false, timer: null };
+  const overlay = document.getElementById('battlePlaybackOverlay');
+  if (overlay) overlay.style.display = 'flex';
+  renderBattlePlayback();
+}
+
+function closeBattlePlayback() {
+  clearBattlePlaybackTimer();
+  battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
+  const overlay = document.getElementById('battlePlaybackOverlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function nextBattleStep() {
+  const steps = currentBattlePlaybackSteps();
+  if (!steps.length) return;
+
+  if (battlePlayback.stepIdx >= steps.length - 1) {
+    clearBattlePlaybackTimer();
+    renderBattlePlayback();
+    return;
+  }
+
+  battlePlayback.stepIdx++;
+  renderBattlePlayback();
+}
+
+function prevBattleStep() {
+  clearBattlePlaybackTimer();
+  battlePlayback.stepIdx = Math.max(0, battlePlayback.stepIdx - 1);
+  renderBattlePlayback();
+}
+
+function toggleBattleAutoplay() {
+  const steps = currentBattlePlaybackSteps();
+  if (!steps.length) return;
+
+  if (battlePlayback.playing) {
+    clearBattlePlaybackTimer();
+    renderBattlePlayback();
+    return;
+  }
+
+  if (battlePlayback.stepIdx >= steps.length - 1) battlePlayback.stepIdx = 0;
+  battlePlayback.playing = true;
+  renderBattlePlayback();
+  battlePlayback.timer = setInterval(nextBattleStep, 1450);
+}
+
+function playbackMultiplierText(multiplier) {
+  if (multiplier >= 4) return '4x hit';
+  if (multiplier > 1) return `${multiplier}x hit`;
+  if (multiplier === 0) return 'immune';
+  if (multiplier < 1) return `${multiplier}x resisted`;
+  return 'neutral';
+}
+
+function renderBattlePlaybackSide(game, step, side) {
+  const isA = side === 'A';
+  const team = teams[isA ? game.teamAIdx : game.teamBIdx];
+  const pokemonId = isA ? step.pokemonAId : step.pokemonBId;
+  const pokemonName = isA ? step.pokemonANameDisplay : step.pokemonBNameDisplay;
+  const multiplier = isA ? step.typeMultiplierA : step.typeMultiplierB;
+  const score = isA ? step.scoreA : step.scoreB;
+  const isWinner = step.winnerIdx === (isA ? game.teamAIdx : game.teamBIdx);
+
+  return `
+    <div class="battle-side-inner">
+      <div class="battle-team-row">
+        <span class="battle-team-dot" style="background:${team.color}"></span>
+        <span>${team.name}</span>
+        <strong>${score}</strong>
+      </div>
+      <img src="${pokemonSpriteUrl(pokemonId)}" alt="${pokemonName}" onerror="this.style.opacity=0">
+      <div class="battle-pokemon-name">${pokemonName}</div>
+      <div class="battle-pokemon-meta">${playbackMultiplierText(multiplier)}</div>
+      <div class="battle-result-tag">${isWinner ? 'Wins skirmish' : 'Faints'}</div>
+    </div>
+  `;
+}
+
+function renderBattlePlayback() {
+  const game = currentBattlePlaybackGame();
+  const steps = currentBattlePlaybackSteps();
+  if (!game || !steps.length) return;
+
+  battlePlayback.stepIdx = clamp(battlePlayback.stepIdx, 0, steps.length - 1);
+  const step = steps[battlePlayback.stepIdx];
+  const teamA = teams[game.teamAIdx];
+  const teamB = teams[game.teamBIdx];
+  const sideA = document.getElementById('battleSideA');
+  const sideB = document.getElementById('battleSideB');
+  const btnPrev = document.getElementById('btnBattlePrev');
+  const btnNext = document.getElementById('btnBattleNext');
+  const btnAuto = document.getElementById('btnBattleAuto');
+
+  document.getElementById('battlePlaybackTitle').textContent = `${teamA.name} vs ${teamB.name}`;
+  document.getElementById('battlePlaybackSub').textContent = `Set ${step.setNumber} of ${steps.length}`;
+  document.getElementById('battlePlaybackText').textContent = step.reason;
+  document.getElementById('battlePlaybackScore').textContent =
+    `${teamA.name} ${step.scoreA} - ${teamB.name} ${step.scoreB}`;
+
+  sideA.className = `battle-side ${step.winnerIdx === game.teamAIdx ? 'winner' : 'loser'}`;
+  sideB.className = `battle-side ${step.winnerIdx === game.teamBIdx ? 'winner' : 'loser'}`;
+  sideA.innerHTML = renderBattlePlaybackSide(game, step, 'A');
+  sideB.innerHTML = renderBattlePlaybackSide(game, step, 'B');
+
+  btnPrev.disabled = battlePlayback.stepIdx === 0;
+  btnNext.disabled = battlePlayback.stepIdx === steps.length - 1;
+  btnAuto.textContent = battlePlayback.playing ? 'Pause' : battlePlayback.stepIdx === steps.length - 1 ? 'Replay' : 'Auto Play';
+}
+
 // ── Regular Season ──
 function showSeasonScreen() {
   document.getElementById('draftScreen').style.display = 'none';
@@ -1463,6 +2216,7 @@ function renderSeasonScreen() {
   `).join('');
 
   const weeks = [...new Set(schedule.map(game => game.week))];
+  const selectedLogGame = getSelectedBattleLogGame('season');
   document.getElementById('seasonSchedule').innerHTML = weeks.map(week => {
     const games = schedule.filter(game => game.week === week);
     return `
@@ -1473,8 +2227,10 @@ function renderSeasonScreen() {
           const teamB = teams[game.teamBIdx];
           const winnerA = game.winnerIdx === game.teamAIdx;
           const winnerB = game.winnerIdx === game.teamBIdx;
+          const clickable = game.simulated ? ` onclick="selectBattleLog('season', '${game.id}')"` : '';
+          const selected = selectedLogGame?.id === game.id ? ' selected' : '';
           return `
-            <div class="season-game${game.simulated ? ' simulated' : ''}">
+            <div class="season-game${game.simulated ? ' simulated' : ''}${selected}"${clickable}>
               <div class="season-game-team${winnerA ? ' winner' : ''}">
                 <span class="season-team-dot" style="background:${teamA.color}"></span>
                 <span>${teamA.name}</span>
@@ -1492,6 +2248,7 @@ function renderSeasonScreen() {
       </div>
     `;
   }).join('');
+  renderBattleLogPanel('seasonBattleLog', selectedLogGame, 'season');
 
   document.getElementById('btnSimWeek').disabled = complete;
   document.getElementById('btnSimAll').disabled = complete;
@@ -1566,6 +2323,7 @@ function renderPlayoffScreen() {
       : 'Waiting for bracket results';
 
   const rounds = [...new Set(games.map(game => game.round))];
+  const selectedLogGame = getSelectedBattleLogGame('playoff');
   document.getElementById('playoffBracket').innerHTML = rounds.map(round => {
     const roundGames = games.filter(game => game.round === round);
     return `
@@ -1576,8 +2334,10 @@ function renderPlayoffScreen() {
           const seedB = playoffSeedFor(game.teamBIdx);
           const winnerA = game.winnerIdx === game.teamAIdx;
           const winnerB = game.winnerIdx === game.teamBIdx;
+          const clickable = game.simulated ? ` onclick="selectBattleLog('playoff', '${game.id}')"` : '';
+          const selected = selectedLogGame?.id === game.id ? ' selected' : '';
           return `
-            <div class="playoff-game${game.simulated ? ' simulated' : ''}">
+            <div class="playoff-game${game.simulated ? ' simulated' : ''}${selected}"${clickable}>
               <div class="playoff-game-label">${game.label}</div>
               <div class="playoff-team${winnerA ? ' winner' : ''}">
                 <span class="playoff-seed-num">${seedA ? seedA : '-'}</span>
@@ -1610,6 +2370,7 @@ function renderPlayoffScreen() {
   document.getElementById('playoffChampion').innerHTML = championIdx !== null && championIdx !== undefined
     ? `<div class="playoff-champ-label">Champion</div><div class="playoff-champ-name">${teams[championIdx].name}</div>`
     : '<div class="playoff-champ-label">Champion</div><div class="playoff-champ-name">TBD</div>';
+  renderBattleLogPanel('playoffBattleLog', selectedLogGame, 'playoff');
 
   document.getElementById('btnSimPlayoffRound').disabled = complete || nextRound === null;
   document.getElementById('btnSimPlayoffsAll').disabled = complete || nextRound === null;
@@ -1738,6 +2499,9 @@ async function continueToNextGen() {
   currentRound = 0;
   currentPickInRound = 0;
   cpuThinking = false;
+  selectedBattleLogs = { season: null, playoff: null };
+  clearBattlePlaybackTimer();
+  battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
 
   draftOrderIndices = [...nextOrder];
   setNextDraftOrder(nextOrder);
@@ -1861,8 +2625,11 @@ function restart() {
   allPokemon = []; teams = []; draftedIds.clear(); snakeOrder = [];
   draftOrderIndices = []; currentGenIdx = 0; draftNumber = 1;
   numRounds = DRAFT_ROUNDS; currentRound = 0; currentPickInRound = 0; cpuThinking = false; season = null;
+  selectedBattleLogs = { season: null, playoff: null };
+  clearBattlePlaybackTimer();
+  battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
   _savedForResume = null;
-  curSort = 'bst-desc'; curSearch = ''; curType = '';
+  curSort = 'recommended'; curSearch = ''; curType = '';
   document.getElementById('typeFilter').innerHTML = '<option value="">All Types</option>';
   document.getElementById('progressFill').style.width = '0%';
   document.getElementById('completeScreen').style.display = 'none';

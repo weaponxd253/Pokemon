@@ -99,6 +99,7 @@
           <option value="">All Types</option>
         </select>
         <select class="tb-select" onchange="sortBy(this.value)">
+          <option value="recommended">Recommended</option>
           <option value="bst-desc">BST ↓</option>
           <option value="bst-asc">BST ↑</option>
           <option value="name">Name A–Z</option>
@@ -110,6 +111,7 @@
 
     <div class="teams-panel">
       <div class="tp-header">ROSTERS</div>
+      <div class="draft-assistant" id="draftAssistant"></div>
       <div class="tp-list" id="teamsList"></div>
     </div>
   </div>
@@ -146,6 +148,7 @@
     <div class="season-side">
       <div class="season-section-lbl">Schedule</div>
       <div class="season-schedule" id="seasonSchedule"></div>
+      <div class="battle-log-panel" id="seasonBattleLog"></div>
     </div>
   </div>
 
@@ -173,6 +176,7 @@
       <div class="playoff-section-lbl">Seeds</div>
       <div class="playoff-seeds" id="playoffSeeds"></div>
       <div class="playoff-champion" id="playoffChampion"></div>
+      <div class="battle-log-panel" id="playoffBattleLog"></div>
     </div>
   </div>
 
@@ -180,6 +184,34 @@
     <button class="btn-playoff-primary" id="btnSimPlayoffRound" onclick="simulateNextPlayoffRound()">Simulate Round</button>
     <button class="btn-playoff-secondary" id="btnSimPlayoffsAll" onclick="simulateAllPlayoffs()">Simulate All</button>
     <button class="btn-playoff-continue" id="btnPlayoffContinue" onclick="continueAfterPlayoffs()">Continue</button>
+  </div>
+</div>
+
+<!-- ══════════════ BATTLE PLAYBACK ══════════════ -->
+<div id="battlePlaybackOverlay">
+  <div class="battle-playback">
+    <div class="battle-playback-top">
+      <div>
+        <div class="battle-playback-title" id="battlePlaybackTitle">Battle Playback</div>
+        <div class="battle-playback-sub" id="battlePlaybackSub">Skirmish replay</div>
+      </div>
+      <button class="btn-battle-close" onclick="closeBattlePlayback()">Close</button>
+    </div>
+
+    <div class="battle-stage">
+      <div class="battle-side" id="battleSideA"></div>
+      <div class="battle-versus">VS</div>
+      <div class="battle-side" id="battleSideB"></div>
+    </div>
+
+    <div class="battle-playback-text" id="battlePlaybackText"></div>
+    <div class="battle-playback-score" id="battlePlaybackScore"></div>
+
+    <div class="battle-playback-controls">
+      <button class="btn-battle-control" id="btnBattlePrev" onclick="prevBattleStep()">Prev</button>
+      <button class="btn-battle-control primary" id="btnBattleAuto" onclick="toggleBattleAutoplay()">Auto Play</button>
+      <button class="btn-battle-control" id="btnBattleNext" onclick="nextBattleStep()">Next</button>
+    </div>
   </div>
 </div>
 
