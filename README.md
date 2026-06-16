@@ -8,7 +8,7 @@
 
 ## What It Is
 
-Pokémon Draft League is a browser-based snake draft simulator for 2–8 players (or CPU opponents). Each team takes turns picking Pokémon from a generation's full Pokédex in snake order — 1st picks first in odd rounds, last picks first in even rounds. Play through one generation or chain all four together into a full multi-generation season.
+Pokémon Draft League is a browser-based snake draft simulator for 2–12 players (or CPU opponents). Each team takes turns picking Pokémon from a generation's full Pokédex in snake order — 1st picks first in odd rounds, last picks first in even rounds. Each generation draft gives every team six picks, then teams lock an active roster of six before the season plays out. Play through one generation or chain all four together into a full multi-generation season.
 
 ---
 
@@ -16,8 +16,9 @@ Pokémon Draft League is a browser-based snake draft simulator for 2–8 players
 
 ### Draft Engine
 - **Snake draft order** — fully randomised first-pick order, reversed every round for fairness
-- **2–8 teams** with custom names
-- **1–8 rounds** per team per generation
+- **2–12 teams** with custom names
+- **Fixed 6-pick drafts** per team per generation
+- **Active rosters of 6** for regular season and playoff simulations
 - **CPU opponents** with a scoring heuristic that balances BST and type diversity with a jitter to keep picks unpredictable
 - **Real-time draft board** showing every pick in the snake order, with the current pick highlighted
 
@@ -46,10 +47,11 @@ Pokémon Draft League is a browser-based snake draft simulator for 2–8 players
 
 ## How to Play
 
-1. **Set up your league** — choose the number of teams, name them, toggle any to CPU, set rounds per team and the starting generation
-2. **Draft** — click any Pokémon card to draft it for the current team. The snake bar at the top tracks whose turn it is
-3. **Between generations** — the lobby shows current standings and the next round's draft order
-4. **Final results** — teams are ranked by total Base Stat Total across all drafted Pokémon
+1. **Set up your league** — choose the number of teams, name them, toggle any to CPU, and select the starting generation
+2. **Draft** — click any Pokémon card to draft it for the current team. Each team gets six picks per generation
+3. **Lock active rosters** — choose the six Pokémon that will compete in the season; CPU teams auto-select theirs
+4. **Simulate the season** — play through the regular season and playoffs to crown a champion
+5. **Between generations** — the lobby shows standings and the next draft order
 
 ---
 

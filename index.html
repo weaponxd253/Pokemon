@@ -37,7 +37,7 @@
     <div class="form-group">
       <label class="form-label">Number of Teams</label>
       <div class="range-row">
-        <input type="range" id="numTeamsRange" min="2" max="8" value="4" oninput="updateTeamCount(this.value)">
+        <input type="range" id="numTeamsRange" min="2" max="12" value="4" oninput="updateTeamCount(this.value)">
         <div class="range-val" id="numTeamsVal">4</div>
       </div>
     </div>
@@ -46,10 +46,13 @@
       <div class="team-names-grid" id="teamNamesGrid"></div>
     </div>
     <div class="form-group">
-      <label class="form-label">Rounds Per Team</label>
-      <div class="range-row">
-        <input type="range" id="numRoundsRange" min="1" max="8" value="4" oninput="updateRounds(this.value)">
-        <div class="range-val" id="numRoundsVal">4</div>
+      <label class="form-label">Draft &amp; Active Roster</label>
+      <div class="fixed-setting">
+        <div>
+          <div class="fixed-setting-main">6 picks per team</div>
+          <div class="fixed-setting-sub">Active roster locks at 6 Pokémon</div>
+        </div>
+        <div class="range-val" id="numRoundsVal">6</div>
       </div>
     </div>
     <div class="form-group">
@@ -109,6 +112,21 @@
       <div class="tp-header">ROSTERS</div>
       <div class="tp-list" id="teamsList"></div>
     </div>
+  </div>
+</div>
+
+<!-- ══════════════ ACTIVE ROSTERS ══════════════ -->
+<div id="rosterScreen">
+  <div class="roster-header-row">
+    <div class="roster-title" id="rosterTitle">Active Rosters</div>
+    <div class="roster-sub" id="rosterSub">Lock 6 Pokémon for the season</div>
+  </div>
+
+  <div class="roster-layout" id="rosterLayout"></div>
+
+  <div class="roster-actions">
+    <button class="btn-roster-secondary" onclick="autoSetAllActiveRosters()">Auto Set Rosters</button>
+    <button class="btn-roster-primary" id="btnRosterContinue" onclick="continueAfterRosterLock()">Continue</button>
   </div>
 </div>
 

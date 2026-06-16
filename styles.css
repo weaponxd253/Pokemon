@@ -211,6 +211,21 @@ input[type="range"] { flex: 1; accent-color: var(--yellow); cursor: pointer; hei
   min-width: 32px; text-align: center;
 }
 
+.fixed-setting {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.fixed-setting-main {
+  font-weight: 700; font-size: 16px; color: var(--text);
+}
+
+.fixed-setting-sub {
+  font-size: 12px; color: var(--muted); margin-top: 2px;
+}
+
 select, .team-name-field {
   width: 100%;
   background: var(--surface2); border: 1px solid var(--border);
@@ -490,6 +505,127 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 .mini-chip img { width: 22px; height: 22px; image-rendering: pixelated; }
 .mini-chip span { font-size: 11px; font-weight: 600; text-transform: capitalize; }
 .tt-empty { font-size: 11px; color: var(--muted); font-style: italic; }
+
+/* ═══════════ ACTIVE ROSTERS ═══════════ */
+#rosterScreen {
+  display: none; flex-direction: column;
+  min-height: 100vh; padding: 42px 20px;
+  position: relative; z-index: 1; overflow-y: auto;
+}
+
+.roster-header-row { text-align: center; margin-bottom: 32px; }
+
+.roster-title {
+  font-family: 'Press Start 2P', monospace;
+  font-size: clamp(12px, 2vw, 18px); color: var(--yellow);
+  text-shadow: 2px 2px 0 var(--red); margin-bottom: 10px;
+}
+
+.roster-sub {
+  color: var(--muted); font-size: 12px;
+  letter-spacing: 3px; text-transform: uppercase;
+}
+
+.roster-layout {
+  width: 100%; max-width: 1400px; margin: 0 auto;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 14px; align-items: start;
+}
+
+.roster-team-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+
+.roster-team-head {
+  padding: 11px 14px; display: flex; align-items: center; gap: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.roster-team-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+.roster-team-name {
+  flex: 1; display: flex; align-items: center; gap: 6px;
+  font-weight: 700; font-size: 14px; min-width: 0;
+}
+
+.roster-team-count {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px; color: var(--yellow);
+}
+
+.roster-picks {
+  padding: 10px; display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 8px;
+}
+
+.roster-pick {
+  min-height: 92px; padding: 8px 6px;
+  background: var(--surface2); color: var(--muted);
+  border: 1px solid var(--border); border-radius: 8px;
+  display: grid; grid-template-rows: 38px auto auto;
+  justify-items: center; gap: 2px;
+  font-family: 'Rajdhani', sans-serif; cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s, opacity 0.15s;
+}
+
+.roster-pick:hover:not(:disabled) {
+  border-color: var(--yellow); transform: translateY(-2px);
+}
+
+.roster-pick.active {
+  color: var(--text); border-color: var(--yellow);
+  box-shadow: 0 0 12px rgba(255,215,0,0.12);
+}
+
+.roster-pick:disabled {
+  cursor: default;
+}
+
+.roster-pick img {
+  width: 42px; height: 42px; image-rendering: pixelated;
+}
+
+.roster-pick span {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; text-transform: capitalize;
+  font-weight: 700; font-size: 12px;
+}
+
+.roster-pick strong {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px; color: var(--yellow);
+}
+
+.roster-actions {
+  display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
+  width: 100%; max-width: 1400px; margin: 28px auto 0;
+}
+
+.btn-roster-primary, .btn-roster-secondary {
+  padding: 14px 28px; border-radius: 10px;
+  font-family: 'Press Start 2P', monospace; font-size: 9px;
+  cursor: pointer; letter-spacing: 0.5px; transition: all 0.2s;
+}
+
+.btn-roster-primary {
+  background: var(--yellow); color: #000; border: none;
+}
+
+.btn-roster-secondary {
+  background: transparent; color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.btn-roster-primary:hover:not(:disabled),
+.btn-roster-secondary:hover:not(:disabled) {
+  filter: brightness(1.1); transform: translateY(-2px);
+}
+
+.btn-roster-primary:disabled {
+  opacity: 0.35; cursor: not-allowed; transform: none;
+}
 
 /* ═══════════ REGULAR SEASON ═══════════ */
 #seasonScreen {
@@ -992,6 +1128,8 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 }
 
 .mini-chip.prev-gen { opacity: 0.65; }
+.mini-chip.active-roster { outline: 1px solid rgba(255,215,0,0.35); }
+.mini-chip.bench-roster { opacity: 0.45; }
 
 /* ═══════════════════════════════════════
    MOBILE RESPONSIVE  (≤ 640px)
@@ -1075,6 +1213,15 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   #lobbyScreen { padding: 28px 14px; }
   .lobby-standings-grid { grid-template-columns: 1fr; }
   .lobby-order-pills { gap: 6px; }
+
+  /* ── Active rosters ── */
+  #rosterScreen { padding: 28px 14px; }
+  .roster-layout { grid-template-columns: 1fr; }
+  .roster-picks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .roster-actions { flex-direction: column; }
+  .btn-roster-primary, .btn-roster-secondary {
+    width: 100%; padding: 16px;
+  }
 
   /* ── Regular season ── */
   #seasonScreen { padding: 28px 14px; }
