@@ -311,6 +311,10 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   position: relative; z-index: 1;
 }
 
+@supports (height: 100dvh) {
+  #draftScreen { height: 100dvh; }
+}
+
 .draft-header {
   background: var(--surface); border-bottom: 1px solid var(--border);
   padding: 10px 20px; display: flex;
@@ -329,6 +333,8 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 .dh-picker {
   font-family: 'Press Start 2P', monospace;
   font-size: 11px; transition: color 0.3s;
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px; flex-wrap: wrap; line-height: 1.8;
 }
 
 @keyframes thinking {
@@ -373,11 +379,11 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 .s-sep { color: var(--border); font-size: 10px; flex-shrink: 0; padding: 0 2px; }
 
 /* Draft body layout */
-.draft-body { display: flex; flex: 1; overflow: hidden; }
+.draft-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
 
 /* Available Pokémon panel */
 .pokemon-panel {
-  flex: 1; min-width: 0; display: flex;
+  flex: 1; min-width: 0; min-height: 0; display: flex;
   flex-direction: column; border-right: 1px solid var(--border);
 }
 
@@ -402,9 +408,10 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 }
 
 .poke-grid {
-  flex: 1; overflow-y: auto; padding: 12px;
+  flex: 1; min-height: 0; overflow-y: auto; padding: 12px;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
   gap: 10px; align-content: start;
+  -webkit-overflow-scrolling: touch;
 }
 
 .poke-card {
@@ -481,7 +488,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 /* Teams panel */
 .teams-panel {
   width: 258px; flex-shrink: 0;
-  display: flex; flex-direction: column; overflow: hidden;
+  min-height: 0; display: flex; flex-direction: column; overflow: hidden;
 }
 
 .tp-header {
@@ -492,8 +499,9 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 }
 
 .tp-list {
-  flex: 1; overflow-y: auto; padding: 10px;
+  flex: 1; min-height: 0; overflow-y: auto; padding: 10px;
   display: flex; flex-direction: column; gap: 8px;
+  -webkit-overflow-scrolling: touch;
 }
 
 .draft-assistant {
@@ -519,6 +527,14 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 }
 
 .da-team-row span:nth-child(2) {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.da-team-name {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+}
+
+.da-team-name > span:first-child {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
@@ -682,14 +698,56 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 }
 
 .tt-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
-.tt-name { flex: 1; }
+.tt-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .tt-count { font-size: 11px; color: var(--muted); }
 
 .tt-cpu-badge {
   font-family: 'Press Start 2P', monospace;
   font-size: 6px; color: var(--red);
-  border: 1px solid var(--red); border-radius: 4px;
-  padding: 2px 5px; letter-spacing: 0.5px;
+  border: 1px solid currentColor; border-radius: 4px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  padding: 3px 5px; letter-spacing: 0.5px;
+  display: inline-flex; align-items: center; gap: 4px;
+  line-height: 1; vertical-align: middle;
+}
+
+.cpu-personality-badge {
+  white-space: nowrap; flex-shrink: 0;
+}
+
+.cpu-badge-kind {
+  opacity: 0.62;
+}
+
+.cpu-badge-label {
+  color: var(--text);
+}
+
+.cpu-personality-balanced { color: #4ade80; }
+.cpu-personality-power { color: #fb7185; }
+.cpu-personality-speed { color: #facc15; }
+.cpu-personality-bulky { color: #38bdf8; }
+.cpu-personality-coverage { color: #c084fc; }
+
+.dh-cpu-personality,
+.da-cpu-personality,
+.season-cpu-personality,
+.playoff-cpu-personality,
+.order-cpu-personality,
+.lobby-cpu-personality {
+  font-size: 5px;
+  padding: 3px 4px;
+}
+
+.resume-cpu-personality {
+  font-size: 5px;
+}
+
+.s-pip-cpu {
+  box-shadow: inset 0 0 0 2px currentColor;
 }
 
 .tt-picks {
@@ -886,6 +944,21 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 .season-team-name {
   font-weight: 700; font-size: 14px;
   display: flex; align-items: center; gap: 6px; min-width: 0;
+}
+
+.season-team-name,
+.playoff-team-name,
+.order-name,
+.lobby-team-name,
+.roster-team-name,
+.resume-team-name {
+  min-width: 0;
+}
+
+.playoff-team-name,
+.order-name {
+  display: inline-flex; align-items: center; gap: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 .season-record {
@@ -1648,21 +1721,21 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   .s-pip { width: 20px; height: 20px; font-size: 8px; }
 
   /* ── Draft body: stack panels, add tab switcher ── */
-  .draft-body { flex-direction: column; position: relative; }
+  .draft-body { flex-direction: column; position: relative; min-height: 0; }
 
   .pokemon-panel {
     border-right: none;
     border-bottom: 1px solid var(--border);
     display: none;          /* hidden by default; JS toggles via .active */
   }
-  .pokemon-panel.active { display: flex; flex: 1; }
+  .pokemon-panel.active { display: flex; flex: 1; min-height: 0; }
 
   .teams-panel {
     width: 100%;
     display: none;
     flex-direction: column;
   }
-  .teams-panel.active { display: flex; flex: 1; }
+  .teams-panel.active { display: flex; flex: 1; min-height: 0; }
 
   /* ── Tab bar (injected by JS) ── */
   .mobile-tabs {
@@ -1688,7 +1761,8 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   /* ── Pokemon grid – smaller cards ── */
   .poke-grid {
     grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-    gap: 8px; padding: 10px;
+    gap: 8px; padding: 10px 10px 18px;
+    min-height: 0; overscroll-behavior: contain;
   }
 
   .poke-card { padding: 10px 6px 8px; }
@@ -1704,7 +1778,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   .tb-select { flex: 1; font-size: 13px; padding: 7px 8px; }
 
   /* ── Teams panel on mobile ── */
-  .tp-list { padding: 8px; gap: 6px; }
+  .tp-list { padding: 8px 8px 18px; gap: 6px; min-height: 0; overscroll-behavior: contain; }
   .draft-assistant { padding: 8px; }
   .da-best { grid-template-columns: 36px minmax(0, 1fr) 32px; padding: 7px; }
   .da-best img { width: 36px; height: 36px; }

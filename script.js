@@ -40,6 +40,61 @@ const DEFAULT_NAMES = [
   'Lime Lights', 'Magenta Max', 'Indigo Crew', 'Amber Guard'
 ];
 
+const CPU_PERSONALITIES = {
+  balanced: {
+    label: 'Balanced',
+    short: 'BAL',
+    topN: 4,
+    randomness: 4.5,
+    wildcardChance: 0.08,
+    wildcardTopN: 6,
+    selectionTemperature: 8,
+    weights: { power: 0.40, typeFit: 0.18, role: 0.18, weakness: 0.16, scarcity: 0.08 },
+  },
+  power: {
+    label: 'Power',
+    short: 'PWR',
+    topN: 2,
+    randomness: 2.5,
+    wildcardChance: 0.03,
+    wildcardTopN: 4,
+    selectionTemperature: 4.5,
+    weights: { power: 0.60, attack: 0.18, typeFit: 0.05, role: 0.05, weakness: 0.07, scarcity: 0.05 },
+  },
+  speed: {
+    label: 'Speed',
+    short: 'SPD',
+    topN: 4,
+    randomness: 6.5,
+    wildcardChance: 0.10,
+    wildcardTopN: 7,
+    selectionTemperature: 8.5,
+    weights: { power: 0.28, speed: 0.26, role: 0.18, typeFit: 0.10, weakness: 0.10, scarcity: 0.04, attack: 0.04 },
+  },
+  bulky: {
+    label: 'Bulky',
+    short: 'BLK',
+    topN: 4,
+    randomness: 5,
+    wildcardChance: 0.08,
+    wildcardTopN: 6,
+    selectionTemperature: 7.5,
+    weights: { power: 0.28, bulk: 0.24, weakness: 0.20, role: 0.14, typeFit: 0.08, scarcity: 0.04, attack: 0.02 },
+  },
+  coverage: {
+    label: 'Coverage',
+    short: 'COV',
+    topN: 5,
+    randomness: 8,
+    wildcardChance: 0.14,
+    wildcardTopN: 8,
+    selectionTemperature: 10,
+    weights: { power: 0.25, typeFit: 0.34, weakness: 0.18, scarcity: 0.12, role: 0.08, speed: 0.03 },
+  },
+};
+
+const CPU_PERSONALITY_ORDER = ['balanced', 'power', 'speed', 'bulky', 'coverage'];
+
 const GENS = [
   { num: 1, label: 'Gen 1 — Kanto',  short: 'G1', start: 1,   end: 151, color: '#ff6b6b' },
   { num: 2, label: 'Gen 2 — Johto',  short: 'G2', start: 152, end: 251, color: '#ffd93d' },
@@ -50,6 +105,7 @@ const GENS = [
 const MAX_TEAMS = 12;
 const DRAFT_ROUNDS = 6;
 const ACTIVE_ROSTER_SIZE = 6;
+const SAVE_VERSION = 4;
 
 // ── State ──
 let allPokemon = [];
@@ -79,6 +135,95 @@ const SEASON_PHASES = {
 // ── Helpers ──
 function getGen(id) {
   return GENS.find(g => id >= g.start && id <= g.end) ?? GENS[0];
+}
+
+function isValidCpuPersonality(key) {
+  return Boolean(CPU_PERSONALITIES[key]);
+}
+
+function normalizeCpuPersonalityKey(key) {
+  return isValidCpuPersonality(key) ? key : null;
+}
+
+function defaultCpuPersonality(cpuOrdinal) {
+  return CPU_PERSONALITY_ORDER[cpuOrdinal % CPU_PERSONALITY_ORDER.length];
+}
+
+function normalizeCpuPersonalities(teamList = teams) {
+  let cpuOrdinal = 0;
+  teamList.forEach(team => {
+    if (!team?.isCpu) {
+      team.cpuPersonality = null;
+      return;
+    }
+    if (!isValidCpuPersonality(team.cpuPersonality)) {
+      team.cpuPersonality = defaultCpuPersonality(cpuOrdinal);
+    }
+    cpuOrdinal++;
+  });
+  return teamList;
+}
+
+function normalizeSavedTeamList(teamList = [], fallbackList = []) {
+  let cpuOrdinal = 0;
+  return teamList.map((team, idx) => {
+    const fallback = fallbackList[idx] ?? {};
+    const normalized = {
+      ...team,
+      isCpu: Boolean(team?.isCpu),
+      picks: Array.isArray(team?.picks) ? [...team.picks] : [],
+      activeIds: Array.isArray(team?.activeIds) ? [...team.activeIds] : [],
+    };
+
+    if (!normalized.isCpu) {
+      normalized.cpuPersonality = null;
+      return normalized;
+    }
+
+    normalized.cpuPersonality =
+      normalizeCpuPersonalityKey(team?.cpuPersonality) ??
+      normalizeCpuPersonalityKey(team?.personality) ??
+      normalizeCpuPersonalityKey(fallback?.cpuPersonality) ??
+      normalizeCpuPersonalityKey(fallback?.personality) ??
+      defaultCpuPersonality(cpuOrdinal);
+    cpuOrdinal++;
+    return normalized;
+  });
+}
+
+function normalizeSavedSeason(saved, normalizedTeams) {
+  if (!saved?.season) return saved?.season ?? null;
+  const hasSeasonTeams = Array.isArray(saved.season.teams) && saved.season.teams.length > 0;
+  const seasonTeams = normalizeSavedTeamList(hasSeasonTeams ? saved.season.teams : normalizedTeams, normalizedTeams);
+  return {
+    ...saved.season,
+    version: SAVE_VERSION,
+    teams: seasonTeams,
+    settings: {
+      ...(saved.season.settings ?? {}),
+      numTeams: saved.season.settings?.numTeams ?? seasonTeams.length,
+      numRounds: saved.season.settings?.numRounds ?? DRAFT_ROUNDS,
+      activeRosterSize: saved.season.settings?.activeRosterSize ?? ACTIVE_ROSTER_SIZE,
+    },
+  };
+}
+
+function cpuPersonalityLabel(team) {
+  if (!team?.isCpu) return '';
+  return CPU_PERSONALITIES[cpuPersonalityKey(team)]?.label ?? CPU_PERSONALITIES.balanced.label;
+}
+
+function cpuPersonalityKey(team) {
+  return isValidCpuPersonality(team?.cpuPersonality) ? team.cpuPersonality : 'balanced';
+}
+
+function cpuBadgeHtml(team, extraClass = '', options = {}) {
+  if (!team?.isCpu) return '';
+  const key = cpuPersonalityKey(team);
+  const config = CPU_PERSONALITIES[key] ?? CPU_PERSONALITIES.balanced;
+  const label = config.label;
+  const display = options.compact ? config.short : label;
+  return `<span class="tt-cpu-badge cpu-personality-badge cpu-personality-${key}${extraClass ? ` ${extraClass}` : ''}" title="${label} CPU personality" aria-label="${label} CPU personality"><span class="cpu-badge-kind">CPU</span><span class="cpu-badge-label">${display}</span></span>`;
 }
 
 function shuffleArray(arr) {
@@ -653,6 +798,7 @@ function serializeTeam(team) {
     name: team.name,
     color: team.color,
     isCpu: team.isCpu,
+    cpuPersonality: team.isCpu ? cpuPersonalityKey(team) : null,
     picks: teamPickIds(team),
     activeIds: getActiveRosterIds(team),
   };
@@ -670,6 +816,7 @@ function buildSeasonStandings() {
       name: team.name,
       color: team.color,
       isCpu: team.isCpu,
+      cpuPersonality: team.isCpu ? cpuPersonalityKey(team) : null,
       wins: 0,
       losses: 0,
       pointsFor: 0,
@@ -703,7 +850,7 @@ function buildDraftRecord(status = 'inProgress') {
 
 function createSeason() {
   return {
-    version: 3,
+    version: SAVE_VERSION,
     phase: SEASON_PHASES.DRAFT,
     startedAt: new Date().toISOString(),
     settings: {
@@ -738,7 +885,7 @@ function syncSeason(phase = SEASON_PHASES.DRAFT, draftStatus = 'inProgress') {
   const draftRecord = buildDraftRecord(draftStatus);
   const draftIdx = activeSeason.drafts.findIndex(d => d.id === draftRecord.id);
 
-  activeSeason.version = 3;
+  activeSeason.version = SAVE_VERSION;
   activeSeason.phase = phase;
   activeSeason.currentDraftId = draftNumber;
   activeSeason.currentGenIdx = currentGenIdx;
@@ -854,6 +1001,7 @@ function buildRegularSeasonStandings(schedule = getCurrentDraftSchedule()) {
     name: team.name,
     color: team.color,
     isCpu: team.isCpu,
+    cpuPersonality: team.isCpu ? cpuPersonalityKey(team) : null,
     wins: 0,
     losses: 0,
     pointsFor: 0,
@@ -1215,9 +1363,11 @@ async function startDraft() {
     name: nameFields[i]?.value.trim() || `Team ${i + 1}`,
     color: TEAM_COLORS[i],
     isCpu: cpuToggles[i]?.dataset.cpu === 'true',
+    cpuPersonality: null,
     picks: [],
     activeIds: [],
   }));
+  normalizeCpuPersonalities(teams);
 
   // Randomise first draft order
   draftOrderIndices = shuffleArray(Array.from({ length: numTeams }, (_, i) => i));
@@ -1538,7 +1688,7 @@ function renderDraftAssistant() {
     <div class="da-label">Draft Assistant</div>
     <div class="da-team-row">
       <span class="da-team-dot" style="background:${team.color}"></span>
-      <span>${team.name}${team.isCpu ? ' (CPU)' : ''}</span>
+      <span class="da-team-name"><span>${team.name}</span>${cpuBadgeHtml(team, 'da-cpu-personality', { compact: true })}</span>
       <strong>${pickLabel}</strong>
     </div>
     ${topPick ? `
@@ -1583,24 +1733,110 @@ function renderDraftAssistant() {
 }
 
 // ── CPU Logic ──
-function cpuScore(poke, team) {
-  const typesOwned = new Set(team.picks.flatMap(p => p.types));
-  const newTypeBonus = poke.types.some(t => !typesOwned.has(t)) ? 55 : 0;
-  const jitter = (Math.random() - 0.5) * 80;
-  return poke.bst + newTypeBonus + jitter;
+function cpuPersonalityConfig(team) {
+  return CPU_PERSONALITIES[team?.cpuPersonality] ?? CPU_PERSONALITIES.balanced;
+}
+
+function cpuStatBiasScores(poke) {
+  return {
+    speed: clamp(((poke?.stats?.speed ?? 0) - 45) / 95, 0, 1) * 100,
+    bulk: clamp((pokemonBulkScore(poke) - 170) / 190, 0, 1) * 100,
+    attack: clamp((pokemonAttackScore(poke) - 55) / 95, 0, 1) * 100,
+  };
+}
+
+function cpuDraftScore(poke, team) {
+  const config = cpuPersonalityConfig(team);
+  const recommendation = draftRecommendationScore(poke, team);
+  const statBias = cpuStatBiasScores(poke);
+  const weights = config.weights ?? CPU_PERSONALITIES.balanced.weights;
+  const score =
+    recommendation.components.power * (weights.power ?? 0) +
+    recommendation.components.typeFit * (weights.typeFit ?? 0) +
+    recommendation.components.role * (weights.role ?? 0) +
+    recommendation.components.weakness * (weights.weakness ?? 0) +
+    recommendation.components.scarcity * (weights.scarcity ?? 0) +
+    statBias.speed * (weights.speed ?? 0) +
+    statBias.bulk * (weights.bulk ?? 0) +
+    statBias.attack * (weights.attack ?? 0);
+
+  return {
+    score: Number(score.toFixed(2)),
+    recommendation,
+    statBias,
+    personality: team?.cpuPersonality ?? 'balanced',
+  };
+}
+
+function cpuRandomAdjustment(config) {
+  const range = config.randomness ?? CPU_PERSONALITIES.balanced.randomness ?? 6;
+  return (Math.random() * 2 - 1) * range;
+}
+
+function applyCpuPersonalityRandomness(scored, config) {
+  return scored
+    .map((entry, index) => {
+      const randomAdjustment = cpuRandomAdjustment(config);
+      return {
+        ...entry,
+        baseRank: index + 1,
+        randomAdjustment: Number(randomAdjustment.toFixed(2)),
+        finalScore: Number((entry.score + randomAdjustment).toFixed(2)),
+      };
+    })
+    .sort((a, b) =>
+      b.finalScore - a.finalScore ||
+      b.score - a.score ||
+      b.poke.bst - a.poke.bst ||
+      a.poke.id - b.poke.id
+    );
+}
+
+function weightedCpuPoolPick(pool, config) {
+  if (!pool.length) return null;
+  const temperature = Math.max(1, config.selectionTemperature ?? CPU_PERSONALITIES.balanced.selectionTemperature ?? 8);
+  const bestScore = pool[0].finalScore;
+  const weighted = pool.map(entry => ({
+    entry,
+    weight: Math.exp((entry.finalScore - bestScore) / temperature),
+  }));
+  const totalWeight = weighted.reduce((sum, item) => sum + item.weight, 0);
+  let roll = Math.random() * totalWeight;
+
+  for (const item of weighted) {
+    roll -= item.weight;
+    if (roll <= 0) return item.entry;
+  }
+  return weighted[weighted.length - 1].entry;
+}
+
+function chooseCpuDraftEntry(scored, config) {
+  const randomized = applyCpuPersonalityRandomness(scored, config);
+  const preferredTopN = Math.min(config.topN ?? 4, randomized.length);
+  const wildcardTopN = Math.min(config.wildcardTopN ?? preferredTopN, randomized.length);
+  const canWildcard = wildcardTopN > preferredTopN;
+  const useWildcard = canWildcard && Math.random() < (config.wildcardChance ?? 0);
+  const poolSize = useWildcard ? wildcardTopN : preferredTopN;
+  const pool = randomized.slice(0, poolSize);
+
+  return weightedCpuPoolPick(pool, config);
 }
 
 function cpuPick() {
   const team = teams[currentTeamIdx()];
-  const available = allPokemon.filter(p => !draftedIds.has(p.id));
-  if (!available.length) return;
+  const available = availablePokemon();
+  if (!team || !available.length) return;
+
+  if (team.isCpu && !isValidCpuPersonality(team.cpuPersonality)) {
+    normalizeCpuPersonalities(teams);
+  }
+  const config = cpuPersonalityConfig(team);
 
   const scored = available
-    .map(p => ({ poke: p, score: cpuScore(p, team) }))
-    .sort((a, b) => b.score - a.score);
+    .map(p => ({ poke: p, ...cpuDraftScore(p, team) }))
+    .sort((a, b) => b.score - a.score || b.poke.bst - a.poke.bst || a.poke.id - b.poke.id);
 
-  const topN = Math.min(3, scored.length);
-  const choice = scored[Math.floor(Math.random() * topN)].poke;
+  const choice = (chooseCpuDraftEntry(scored, config) ?? scored[0]).poke;
   setCpuThinking(false);
   draftPokemon(choice);
 }
@@ -1646,7 +1882,13 @@ function refreshHeader() {
   const team = teams[currentTeamIdx()];
   const gen = GENS[currentGenIdx];
   const picker = document.getElementById('dhPicker');
-  picker.textContent = team.name + (team.isCpu ? ' (CPU)' : '') + "'s Pick";
+  picker.innerHTML = '';
+  const pickText = document.createElement('span');
+  pickText.textContent = `${team.name}'s Pick`;
+  picker.appendChild(pickText);
+  if (team.isCpu) {
+    picker.insertAdjacentHTML('beforeend', cpuBadgeHtml(team, 'dh-cpu-personality', { compact: true }));
+  }
   picker.style.color = team.color;
   document.getElementById('dhSub').textContent =
     `${gen.short} · Round ${currentRound + 1} · Pick ${currentPickInRound + 1} of ${numTeams}`;
@@ -1666,9 +1908,10 @@ function refreshSnakeBar() {
       bar.appendChild(sep);
     }
     const pip = document.createElement('div');
-    pip.className = 's-pip ' + (i < cur ? 'done' : i === cur ? 'current' : 'upcoming');
+    pip.className = 's-pip ' + (i < cur ? 'done' : i === cur ? 'current' : 'upcoming') +
+      (teams[ti].isCpu ? ` s-pip-cpu cpu-personality-${cpuPersonalityKey(teams[ti])}` : '');
     pip.style.background = teams[ti].color;
-    pip.title = teams[ti].name + (teams[ti].isCpu ? ' (CPU)' : '');
+    pip.title = teams[ti].name + (teams[ti].isCpu ? ` (${cpuPersonalityLabel(teams[ti])} CPU)` : '');
     pip.textContent = ti + 1;
     bar.appendChild(pip);
   });
@@ -1771,7 +2014,7 @@ function refreshTeams() {
             </div>`;
         }).join('')
       : '<span class="tt-empty">No picks yet</span>';
-    const cpuBadge = team.isCpu ? '<span class="tt-cpu-badge">CPU</span>' : '';
+    const cpuBadge = cpuBadgeHtml(team);
     tile.innerHTML = `
       <div class="tt-head">
         <div class="tt-dot" style="background:${team.color}"></div>
@@ -1825,7 +2068,7 @@ function buildSeasonState(
   const activeSeason = syncSeason(phase, draftStatus);
 
   return {
-    version: 3,
+    version: SAVE_VERSION,
     season: activeSeason,
     currentGenIdx,
     draftNumber,
@@ -1888,7 +2131,7 @@ function renderRosterScreen() {
           </button>
         `;
       }).join('');
-    const cpuBadge = team.isCpu ? '<span class="tt-cpu-badge">CPU</span>' : '';
+    const cpuBadge = cpuBadgeHtml(team);
     return `
       <div class="roster-team-card">
         <div class="roster-team-head">
@@ -2207,7 +2450,7 @@ function renderSeasonScreen() {
     <div class="season-standing-row">
       <div class="season-rank">${entry.seed}</div>
       <div class="season-team-dot" style="background:${entry.color}"></div>
-      <div class="season-team-name">${entry.name}${entry.isCpu ? ' <span class="tt-cpu-badge">CPU</span>' : ''}</div>
+      <div class="season-team-name">${entry.name} ${cpuBadgeHtml(entry, 'season-cpu-personality', { compact: true })}</div>
       <div class="season-record">${entry.wins}-${entry.losses}</div>
       <div class="season-stat">PF ${entry.pointsFor}</div>
       <div class="season-stat">PD ${entry.pointDiff > 0 ? '+' : ''}${entry.pointDiff}</div>
@@ -2362,7 +2605,7 @@ function renderPlayoffScreen() {
     <div class="playoff-seed-row">
       <span class="playoff-seed-num">${seed.playoffSeed}</span>
       <span class="playoff-team-dot" style="background:${seed.color}"></span>
-      <span>${seed.name}${seed.isCpu ? ' <span class="tt-cpu-badge">CPU</span>' : ''}</span>
+      <span class="playoff-team-name">${seed.name} ${cpuBadgeHtml(seed, 'playoff-cpu-personality', { compact: true })}</span>
       <strong>${seed.wins}-${seed.losses}</strong>
     </div>
   `).join('');
@@ -2456,7 +2699,7 @@ function showLobby() {
     <div class="order-pill">
       <span class="order-num">${i + 1}</span>
       <span class="order-dot" style="background:${entry.team.color}"></span>
-      <span class="order-name">${entry.team.name}${entry.team.isCpu ? ' (CPU)' : ''}</span>
+      <span class="order-name">${entry.team.name} ${cpuBadgeHtml(entry.team, 'order-cpu-personality', { compact: true })}</span>
     </div>
   `).join('');
 
@@ -2472,7 +2715,7 @@ function showLobby() {
           <span class="lobby-gen-tag" style="background:${g.color}">${g.short}</span>
         </div>`;
     }).join('');
-    const cpuBadge = team.isCpu ? '<span class="tt-cpu-badge">CPU</span>' : '';
+    const cpuBadge = cpuBadgeHtml(team, 'lobby-cpu-personality', { compact: true });
     return `
       <div class="lobby-team-card">
         <div class="lobby-team-head">
@@ -2589,7 +2832,7 @@ function showComplete() {
   grid.innerHTML = '';
 
   ranked.forEach(({ team, totalBst, record, pointDiff }, rank) => {
-    const cpuLabel = team.isCpu ? ' <span style="font-size:10px;opacity:0.6">(CPU)</span>' : '';
+    const cpuLabel = team.isCpu ? ` ${cpuBadgeHtml(team, 'complete-cpu-personality')}` : '';
     const picks = team.picks.map(p => {
       const g = getGen(p.id);
       return `
@@ -2701,16 +2944,21 @@ function getSavedDraftRecord(saved) {
 function normalizeSavedState(saved) {
   const draft = getSavedDraftRecord(saved);
   const seasonTeams = saved.season?.teams ?? [];
+  const hasSavedTeams = Array.isArray(saved.teams) && saved.teams.length > 0;
+  const normalizedTeams = normalizeSavedTeamList(hasSavedTeams ? saved.teams : seasonTeams, hasSavedTeams ? seasonTeams : []);
+  const normalizedSeason = normalizeSavedSeason(saved, normalizedTeams);
   return {
     ...saved,
-    currentGenIdx: saved.currentGenIdx ?? saved.season?.currentGenIdx ?? draft?.genIdx ?? 0,
-    draftNumber: saved.draftNumber ?? saved.season?.currentDraftId ?? draft?.id ?? 1,
-    numTeams: saved.numTeams ?? saved.season?.settings?.numTeams ?? saved.teams?.length ?? seasonTeams.length,
-    numRounds: saved.numRounds ?? saved.season?.settings?.numRounds ?? DRAFT_ROUNDS,
-    teams: saved.teams ?? seasonTeams,
+    version: SAVE_VERSION,
+    season: normalizedSeason,
+    currentGenIdx: saved.currentGenIdx ?? normalizedSeason?.currentGenIdx ?? draft?.genIdx ?? 0,
+    draftNumber: saved.draftNumber ?? normalizedSeason?.currentDraftId ?? draft?.id ?? 1,
+    numTeams: saved.numTeams ?? normalizedSeason?.settings?.numTeams ?? normalizedTeams.length,
+    numRounds: saved.numRounds ?? normalizedSeason?.settings?.numRounds ?? DRAFT_ROUNDS,
+    teams: normalizedTeams,
     draftedIds: saved.draftedIds ?? draft?.draftedIds ?? [],
     snakeOrder: saved.snakeOrder ?? draft?.snakeOrder ?? [],
-    draftOrderIndices: saved.draftOrderIndices ?? draft?.order ?? saved.season?.nextDraftOrder ?? [],
+    draftOrderIndices: saved.draftOrderIndices ?? draft?.order ?? normalizedSeason?.nextDraftOrder ?? [],
     currentRound: saved.currentRound ?? draft?.currentRound ?? 0,
     currentPickInRound: saved.currentPickInRound ?? draft?.currentPickInRound ?? 0,
   };
@@ -2722,6 +2970,7 @@ async function init() {
   const saved = loadSeason();
   if (saved) {
     _savedForResume = normalizeSavedState(saved);
+    saveSeason(_savedForResume);
     showResumeScreen(_savedForResume);
     return;
   }
@@ -2761,9 +3010,7 @@ function showResumeScreen(saved) {
       'src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/' + id + '.png" ' +
       'alt="" onerror="this.style.opacity=0">'
     ).join('');
-    const cpuBadge = t.isCpu
-      ? '<span class="tt-cpu-badge" style="font-size:6px">CPU</span>'
-      : '';
+    const cpuBadge = cpuBadgeHtml(t, 'resume-cpu-personality');
     return '<div class="resume-team-row">' +
       '<div class="resume-team-dot" style="background:' + t.color + '"></div>' +
       '<div class="resume-team-name">' + t.name + ' ' + cpuBadge + '</div>' +
@@ -2808,6 +3055,7 @@ async function restoreSeason(saved) {
     ...t,
     picks: (await Promise.all(t.picks.map(hydrateSavedPokemon))).filter(Boolean),
   })));
+  normalizeCpuPersonalities(teams);
 
   await loadGen(currentGenIdx);
   buildSnakeOrder();
