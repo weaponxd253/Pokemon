@@ -132,6 +132,43 @@
   </div>
 </div>
 
+<!-- ══════════════ FREE AGENTS ══════════════ -->
+<div id="freeAgentScreen">
+  <div class="free-agent-header-row">
+    <div class="free-agent-title" id="freeAgentTitle">Free Agents</div>
+    <div class="free-agent-sub" id="freeAgentSub">Undrafted Pokémon available to sign</div>
+  </div>
+
+  <div class="free-agent-toolbar">
+    <input class="fa-search" id="faSearch" type="text" placeholder="Search free agents…" oninput="filterFreeAgents(this.value)">
+    <select class="fa-select" id="faTypeFilter" onchange="filterFreeAgentType(this.value)">
+      <option value="">All Types</option>
+    </select>
+    <select class="fa-select" id="faSort" onchange="sortFreeAgents(this.value)">
+      <option value="recommended">Best Fit</option>
+      <option value="bst-desc">Highest BST</option>
+      <option value="bst-asc">Lowest BST</option>
+      <option value="name">Name A-Z</option>
+      <option value="number">Number</option>
+    </select>
+    <select class="fa-select" id="faTeamSelect" onchange="selectFreeAgentTeam(this.value)"></select>
+  </div>
+
+  <div class="free-agent-layout">
+    <div class="free-agent-grid" id="freeAgentGrid"></div>
+    <div class="free-agent-side">
+      <div class="free-agent-side-title">Target Team</div>
+      <div class="free-agent-team" id="freeAgentTeam"></div>
+      <div class="free-agent-roster" id="freeAgentRoster"></div>
+    </div>
+  </div>
+
+  <div class="free-agent-actions">
+    <button class="btn-fa-secondary" onclick="showRosterScreen()">Back to Rosters</button>
+    <button class="btn-fa-primary" onclick="continueAfterFreeAgents()">Continue to Season</button>
+  </div>
+</div>
+
 <!-- ══════════════ REGULAR SEASON ══════════════ -->
 <div id="seasonScreen">
   <div class="season-header-row">

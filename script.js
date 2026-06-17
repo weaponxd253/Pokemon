@@ -118,6 +118,7 @@ let draftOrderIndices = [];  // team indices in pick order for current draft
 let currentGenIdx = 0;
 let draftNumber = 1;
 let curSort = 'recommended', curSearch = '', curType = '';
+let faSort = 'recommended', faSearch = '', faType = '', faTeamIdx = 0;
 let cpuThinking = false;
 let season = null;
 let selectedBattleLogs = { season: null, playoff: null };
@@ -166,13 +167,24 @@ function normalizeCpuPersonalities(teamList = teams) {
 
 function normalizeSavedTeamList(teamList = [], fallbackList = []) {
   let cpuOrdinal = 0;
+  const assignedIds = new Set();
   return teamList.map((team, idx) => {
     const fallback = fallbackList[idx] ?? {};
+    const picks = [];
+    (Array.isArray(team?.picks) ? team.picks : []).forEach(pick => {
+      const id = pick?.id ?? pick;
+      if (!Number.isInteger(id) || assignedIds.has(id)) return;
+      assignedIds.add(id);
+      picks.push(pick);
+    });
+    const pickIds = new Set(picks.map(pick => pick?.id ?? pick));
     const normalized = {
       ...team,
       isCpu: Boolean(team?.isCpu),
-      picks: Array.isArray(team?.picks) ? [...team.picks] : [],
-      activeIds: Array.isArray(team?.activeIds) ? [...team.activeIds] : [],
+      picks,
+      activeIds: Array.isArray(team?.activeIds)
+        ? [...new Set(team.activeIds.filter(id => Number.isInteger(id) && pickIds.has(id)))]
+        : [],
     };
 
     if (!normalized.isCpu) {
@@ -788,9 +800,47 @@ function teamRating(team) {
 }
 
 function teamPickIds(team) {
-  return team.picks
+  return (team?.picks ?? [])
     .map(p => p?.id ?? p)
     .filter(id => Number.isInteger(id));
+}
+
+function ownedPokemonIds(teamList = teams) {
+  const ids = new Set();
+  teamList.forEach(team => {
+    teamPickIds(team).forEach(id => ids.add(id));
+    (team?.activeIds ?? [])
+      .filter(id => Number.isInteger(id))
+      .forEach(id => ids.add(id));
+  });
+  return ids;
+}
+
+function pokemonOwner(id, teamList = teams) {
+  return teamList.find((team) =>
+    teamPickIds(team).includes(id) ||
+    (team?.activeIds ?? []).includes(id)
+  ) ?? null;
+}
+
+function isPokemonOwned(id, teamList = teams) {
+  return ownedPokemonIds(teamList).has(id);
+}
+
+function canAddPokemonToTeam(team, poke, teamList = teams) {
+  const id = poke?.id ?? poke;
+  if (!Number.isInteger(id)) return false;
+  if (team && teamPickIds(team).includes(id)) return false;
+  return !isPokemonOwned(id, teamList);
+}
+
+function freeAgentPokemon(source = allPokemon, teamList = teams) {
+  const owned = ownedPokemonIds(teamList);
+  return source.filter(poke => !owned.has(poke.id));
+}
+
+function syncDraftedIdsWithOwnership() {
+  draftedIds = ownedPokemonIds();
 }
 
 function serializeTeam(team) {
@@ -843,7 +893,7 @@ function buildDraftRecord(status = 'inProgress') {
     snakeOrder: [...snakeOrder],
     currentRound,
     currentPickInRound,
-    draftedIds: [...draftedIds],
+    draftedIds: [...ownedPokemonIds()],
     picksByTeam: teams.map(teamPickIds),
   };
 }
@@ -1368,6 +1418,7 @@ async function startDraft() {
     activeIds: [],
   }));
   normalizeCpuPersonalities(teams);
+  syncDraftedIdsWithOwnership();
 
   // Randomise first draft order
   draftOrderIndices = shuffleArray(Array.from({ length: numTeams }, (_, i) => i));
@@ -1538,7 +1589,7 @@ function draftTypeScarcity(poke, available) {
 }
 
 function draftRecommendationScore(poke, team = teams[currentTeamIdx()]) {
-  const available = allPokemon.filter(candidate => !draftedIds.has(candidate.id));
+  const available = availablePokemon();
   const ownedTypes = new Set((team?.picks ?? []).flatMap(p => p.types));
   const newTypes = poke.types.filter(type => !ownedTypes.has(type));
   const weaknesses = draftTeamWeaknesses(team);
@@ -1600,7 +1651,7 @@ function recommendationTitle(rec) {
 }
 
 function availablePokemon() {
-  return allPokemon.filter(poke => !draftedIds.has(poke.id));
+  return freeAgentPokemon(allPokemon);
 }
 
 function getTopRecommendations(team, count = 3) {
@@ -1942,9 +1993,10 @@ function getDisplayList() {
   if (curType) list = list.filter(p => p.types.includes(curType));
   if (curSort === 'recommended') {
     const team = teams[currentTeamIdx()];
+    const owned = ownedPokemonIds();
     list.sort((a, b) => {
-      const draftedA = draftedIds.has(a.id);
-      const draftedB = draftedIds.has(b.id);
+      const draftedA = owned.has(a.id);
+      const draftedB = owned.has(b.id);
       if (draftedA !== draftedB) return draftedA ? 1 : -1;
       if (!team) return b.bst - a.bst;
       const scoreB = draftRecommendationScore(b, team).score;
@@ -1962,8 +2014,9 @@ function getDisplayList() {
 function refreshGrid() {
   const grid = document.getElementById('pokeGrid');
   grid.innerHTML = '';
+  const owned = ownedPokemonIds();
   getDisplayList().forEach(poke => {
-    const isDrafted = draftedIds.has(poke.id);
+    const isDrafted = owned.has(poke.id);
     const rec = isDrafted ? null : draftRecommendationScore(poke);
     const card = document.createElement('div');
     card.className = 'poke-card' + (isDrafted ? ' drafted' : '') + (rec?.score >= 82 ? ' recommended-pick' : '');
@@ -2031,10 +2084,16 @@ function refreshTeams() {
 // ── Drafting ──
 function draftPokemon(poke) {
   const ti = currentTeamIdx();
-  teams[ti].picks.push(poke);
-  if ((teams[ti].activeIds ?? []).length < ACTIVE_ROSTER_SIZE) {
-    teams[ti].activeIds ??= [];
-    teams[ti].activeIds.push(poke.id);
+  const team = teams[ti];
+  if (!team || !canAddPokemonToTeam(team, poke)) {
+    refreshGrid();
+    refreshTeams();
+    return;
+  }
+  team.picks.push(poke);
+  if ((team.activeIds ?? []).length < ACTIVE_ROSTER_SIZE) {
+    team.activeIds ??= [];
+    team.activeIds.push(poke.id);
   }
   draftedIds.add(poke.id);
 
@@ -2074,7 +2133,7 @@ function buildSeasonState(
     draftNumber,
     numTeams, numRounds,
     teams: teams.map(serializeTeam),
-    draftedIds: [...draftedIds],
+    draftedIds: [...ownedPokemonIds()],
     snakeOrder,
     draftOrderIndices,
     currentRound,
@@ -2101,6 +2160,7 @@ function allActiveRostersLocked() {
 function showRosterScreen() {
   document.getElementById('draftScreen').style.display = 'none';
   document.getElementById('seasonScreen').style.display = 'none';
+  document.getElementById('freeAgentScreen').style.display = 'none';
   document.getElementById('playoffScreen').style.display = 'none';
   document.getElementById('lobbyScreen').style.display = 'none';
   document.getElementById('completeScreen').style.display = 'none';
@@ -2175,6 +2235,160 @@ function autoSetAllActiveRosters() {
 
 function continueAfterRosterLock() {
   if (!allActiveRostersLocked()) return;
+  saveSeason(buildSeasonState(SEASON_PHASES.ROSTER_LOCK, 'complete'));
+  showFreeAgentScreen();
+}
+
+function showFreeAgentScreen() {
+  document.getElementById('draftScreen').style.display = 'none';
+  document.getElementById('rosterScreen').style.display = 'none';
+  document.getElementById('seasonScreen').style.display = 'none';
+  document.getElementById('playoffScreen').style.display = 'none';
+  document.getElementById('lobbyScreen').style.display = 'none';
+  document.getElementById('completeScreen').style.display = 'none';
+  document.getElementById('freeAgentScreen').style.display = 'flex';
+
+  faTeamIdx = teams[faTeamIdx] ? faTeamIdx : 0;
+  const gen = GENS[currentGenIdx];
+  document.getElementById('freeAgentTitle').textContent = `${gen.label} Free Agents`;
+  populateFreeAgentControls();
+  renderFreeAgentScreen();
+  saveSeason(buildSeasonState(SEASON_PHASES.ROSTER_LOCK, 'complete'));
+}
+
+function populateFreeAgentControls() {
+  const typeSelect = document.getElementById('faTypeFilter');
+  if (typeSelect) {
+    const types = new Set(allPokemon.flatMap(p => p.types));
+    typeSelect.innerHTML = '<option value="">All Types</option>';
+    [...types].sort().forEach(type => {
+      const option = document.createElement('option');
+      option.value = type;
+      option.textContent = labelFromKey(type);
+      typeSelect.appendChild(option);
+    });
+    typeSelect.value = faType;
+  }
+
+  const teamSelect = document.getElementById('faTeamSelect');
+  if (teamSelect) {
+    teamSelect.innerHTML = teams.map((team, idx) =>
+      `<option value="${idx}">${team.name}${team.isCpu ? ` (${cpuPersonalityLabel(team)} CPU)` : ''}</option>`
+    ).join('');
+    teamSelect.value = String(faTeamIdx);
+  }
+  const search = document.getElementById('faSearch');
+  if (search) search.value = faSearch;
+  const sort = document.getElementById('faSort');
+  if (sort) sort.value = faSort;
+}
+
+function freeAgentDisplayList() {
+  const team = teams[faTeamIdx];
+  let list = freeAgentPokemon(allPokemon);
+  if (faSearch) {
+    const q = faSearch.toLowerCase();
+    list = list.filter(p => p.name.includes(q) || String(p.id).includes(q));
+  }
+  if (faType) list = list.filter(p => p.types.includes(faType));
+
+  if (faSort === 'recommended') {
+    list.sort((a, b) => {
+      const scoreB = team ? draftRecommendationScore(b, team).score : b.bst;
+      const scoreA = team ? draftRecommendationScore(a, team).score : a.bst;
+      return scoreB - scoreA || b.bst - a.bst || a.id - b.id;
+    });
+  } else if (faSort === 'bst-desc') list.sort((a, b) => b.bst - a.bst);
+  else if (faSort === 'bst-asc') list.sort((a, b) => a.bst - b.bst);
+  else if (faSort === 'name') list.sort((a, b) => a.name.localeCompare(b.name));
+  else list.sort((a, b) => a.id - b.id);
+
+  return list;
+}
+
+function renderFreeAgentScreen() {
+  const team = teams[faTeamIdx] ?? teams[0];
+  const list = freeAgentDisplayList();
+  const grid = document.getElementById('freeAgentGrid');
+  const sub = document.getElementById('freeAgentSub');
+  const teamPanel = document.getElementById('freeAgentTeam');
+  const rosterPanel = document.getElementById('freeAgentRoster');
+
+  if (sub) {
+    sub.textContent = `${list.length} available · signing adds bench depth`;
+  }
+
+  if (teamPanel && team) {
+    teamPanel.innerHTML = `
+      <div class="fa-team-head">
+        <span class="fa-team-dot" style="background:${team.color}"></span>
+        <span>${team.name}</span>
+        ${cpuBadgeHtml(team, 'free-agent-cpu-personality', { compact: true })}
+      </div>
+      <div class="fa-team-meta">${team.picks.length} owned · ${(team.activeIds ?? []).length}/${ACTIVE_ROSTER_SIZE} active</div>
+    `;
+  }
+
+  if (rosterPanel && team) {
+    rosterPanel.innerHTML = [...team.picks]
+      .sort((a, b) => pokemonPower(b) - pokemonPower(a))
+      .map(p => `
+        <div class="fa-roster-chip">
+          <img src="${p.sprite}" alt="${p.name}">
+          <span>${p.name}</span>
+          <strong>${p.bst}</strong>
+        </div>
+      `).join('') || '<div class="fa-empty">No owned Pokémon</div>';
+  }
+
+  if (!grid) return;
+  grid.innerHTML = list.length ? list.map(poke => {
+    const rec = team ? draftRecommendationScore(poke, team) : null;
+    return `
+      <button class="free-agent-card" onclick="signFreeAgent(${poke.id})">
+        ${rec ? `<span class="fa-fit" title="${recommendationTitle(rec)}">Fit ${rec.score}</span>` : ''}
+        <img src="${poke.sprite}" alt="${poke.name}" onerror="this.style.visibility='hidden'">
+        <span class="fa-num">#${String(poke.id).padStart(3, '0')}</span>
+        <span class="fa-name">${poke.name}</span>
+        <span class="fa-types">${typePills(poke.types)}</span>
+        <strong>${poke.bst}</strong>
+      </button>
+    `;
+  }).join('') : '<div class="fa-empty">No free agents match the current filters</div>';
+}
+
+function signFreeAgent(pokeId) {
+  const team = teams[faTeamIdx];
+  const poke = allPokemon.find(p => p.id === pokeId);
+  if (!team || !poke || !canAddPokemonToTeam(team, poke)) return;
+  team.picks.push(poke);
+  syncDraftedIdsWithOwnership();
+  renderFreeAgentScreen();
+  saveSeason(buildSeasonState(SEASON_PHASES.ROSTER_LOCK, 'complete'));
+}
+
+function filterFreeAgents(value) {
+  faSearch = value.toLowerCase();
+  renderFreeAgentScreen();
+}
+
+function filterFreeAgentType(value) {
+  faType = value;
+  renderFreeAgentScreen();
+}
+
+function sortFreeAgents(value) {
+  faSort = value;
+  renderFreeAgentScreen();
+}
+
+function selectFreeAgentTeam(value) {
+  const idx = Number(value);
+  faTeamIdx = Number.isInteger(idx) && teams[idx] ? idx : 0;
+  renderFreeAgentScreen();
+}
+
+function continueAfterFreeAgents() {
   saveSeason(buildSeasonState(SEASON_PHASES.ROSTER_LOCK, 'complete'));
   showSeasonScreen();
 }
@@ -2421,6 +2635,7 @@ function renderBattlePlayback() {
 function showSeasonScreen() {
   document.getElementById('draftScreen').style.display = 'none';
   document.getElementById('rosterScreen').style.display = 'none';
+  document.getElementById('freeAgentScreen').style.display = 'none';
   document.getElementById('playoffScreen').style.display = 'none';
   document.getElementById('lobbyScreen').style.display = 'none';
   document.getElementById('completeScreen').style.display = 'none';
@@ -2537,6 +2752,7 @@ function playoffSeedFor(teamIdx) {
 function showPlayoffScreen() {
   document.getElementById('draftScreen').style.display = 'none';
   document.getElementById('rosterScreen').style.display = 'none';
+  document.getElementById('freeAgentScreen').style.display = 'none';
   document.getElementById('seasonScreen').style.display = 'none';
   document.getElementById('lobbyScreen').style.display = 'none';
   document.getElementById('completeScreen').style.display = 'none';
@@ -2668,6 +2884,7 @@ function continueAfterPlayoffs() {
 function showLobby() {
   document.getElementById('draftScreen').style.display = 'none';
   document.getElementById('rosterScreen').style.display = 'none';
+  document.getElementById('freeAgentScreen').style.display = 'none';
   document.getElementById('seasonScreen').style.display = 'none';
   document.getElementById('playoffScreen').style.display = 'none';
   document.getElementById('lobbyScreen').style.display = 'flex';
@@ -2748,6 +2965,7 @@ async function continueToNextGen() {
 
   draftOrderIndices = [...nextOrder];
   setNextDraftOrder(nextOrder);
+  syncDraftedIdsWithOwnership();
 
   document.getElementById('lobbyScreen').style.display = 'none';
   await loadGen(currentGenIdx);
@@ -2782,6 +3000,7 @@ function sortBy(val)       { curSort = val; refreshGrid(); }
 function showComplete() {
   document.getElementById('draftScreen').style.display = 'none';
   document.getElementById('rosterScreen').style.display = 'none';
+  document.getElementById('freeAgentScreen').style.display = 'none';
   document.getElementById('seasonScreen').style.display = 'none';
   document.getElementById('playoffScreen').style.display = 'none';
   document.getElementById('lobbyScreen').style.display = 'none';
@@ -2877,6 +3096,7 @@ function restart() {
   document.getElementById('progressFill').style.width = '0%';
   document.getElementById('completeScreen').style.display = 'none';
   document.getElementById('rosterScreen').style.display = 'none';
+  document.getElementById('freeAgentScreen').style.display = 'none';
   document.getElementById('seasonScreen').style.display = 'none';
   document.getElementById('playoffScreen').style.display = 'none';
   document.getElementById('lobbyScreen').style.display = 'none';
@@ -3056,6 +3276,7 @@ async function restoreSeason(saved) {
     picks: (await Promise.all(t.picks.map(hydrateSavedPokemon))).filter(Boolean),
   })));
   normalizeCpuPersonalities(teams);
+  syncDraftedIdsWithOwnership();
 
   await loadGen(currentGenIdx);
   buildSnakeOrder();
