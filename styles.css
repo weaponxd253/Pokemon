@@ -1006,6 +1006,58 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   text-transform: uppercase; letter-spacing: 1px;
 }
 
+.fa-waiver-panel {
+  margin-top: 10px; padding: 10px;
+  background: rgba(255,255,255,0.035); border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.fa-waiver-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 8px;
+  color: var(--text); font-size: 13px; font-weight: 700;
+}
+
+.fa-pass-btn {
+  min-height: 28px; padding: 0 10px;
+  background: transparent; color: var(--yellow);
+  border: 1px solid rgba(255,215,0,0.45); border-radius: 5px;
+  font-family: 'Rajdhani', sans-serif; font-size: 12px; font-weight: 700;
+  cursor: pointer;
+}
+
+.fa-pass-btn:hover {
+  background: rgba(255,215,0,0.1);
+}
+
+.fa-waiver-pills {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+
+.fa-waiver-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  max-width: 100%; padding: 4px 7px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 999px; color: var(--muted); font-size: 12px;
+}
+
+.fa-waiver-pill.current {
+  color: var(--yellow); border-color: rgba(255,215,0,0.45);
+}
+
+.fa-waiver-pill span {
+  font-family: 'Press Start 2P', monospace; font-size: 7px;
+}
+
+.fa-waiver-pill i {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+
+.fa-waiver-pill strong {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 700;
+}
+
 .fa-roster-limit {
   margin-top: 10px; padding: 8px 10px;
   background: rgba(255,255,255,0.04); border: 1px solid var(--border);
@@ -2062,6 +2114,8 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   .free-agent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .free-agent-side { position: static; }
   .free-agent-roster { max-height: 260px; }
+  .fa-waiver-head { align-items: flex-start; flex-direction: column; }
+  .fa-pass-btn { width: 100%; }
   .free-agent-actions { flex-direction: column; }
   .btn-fa-primary, .btn-fa-secondary {
     width: 100%; padding: 16px;
