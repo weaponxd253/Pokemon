@@ -105,6 +105,7 @@ const GENS = [
 const MAX_TEAMS = 12;
 const DRAFT_ROUNDS = 6;
 const ACTIVE_ROSTER_SIZE = 6;
+const MAX_ROSTER_SIZE = ACTIVE_ROSTER_SIZE + 2;
 const SAVE_VERSION = 4;
 
 // ── State ──
@@ -119,6 +120,7 @@ let currentGenIdx = 0;
 let draftNumber = 1;
 let curSort = 'recommended', curSearch = '', curType = '';
 let faSort = 'recommended', faSearch = '', faType = '', faTeamIdx = 0;
+let faDropId = null, faNotice = '';
 let cpuThinking = false;
 let season = null;
 let selectedBattleLogs = { season: null, playoff: null };
@@ -216,6 +218,7 @@ function normalizeSavedSeason(saved, normalizedTeams) {
       numTeams: saved.season.settings?.numTeams ?? seasonTeams.length,
       numRounds: saved.season.settings?.numRounds ?? DRAFT_ROUNDS,
       activeRosterSize: saved.season.settings?.activeRosterSize ?? ACTIVE_ROSTER_SIZE,
+      maxRosterSize: saved.season.settings?.maxRosterSize ?? MAX_ROSTER_SIZE,
     },
   };
 }
@@ -298,6 +301,42 @@ function ensureActiveRosters() {
 
 function isActiveRosterLocked(team) {
   return (team.activeIds ?? []).length === Math.min(ACTIVE_ROSTER_SIZE, team.picks.length);
+}
+
+function rosterLimit() {
+  return season?.settings?.maxRosterSize ?? MAX_ROSTER_SIZE;
+}
+
+function rosterCount(team) {
+  return teamPickIds(team).length;
+}
+
+function isBenchPokemon(team, pokeId) {
+  const active = new Set(getActiveRosterIds(team));
+  return teamPickIds(team).includes(pokeId) && !active.has(pokeId);
+}
+
+function canDropPokemon(team, pokeId) {
+  if (!team || !Number.isInteger(pokeId)) return false;
+  return rosterCount(team) > ACTIVE_ROSTER_SIZE && isBenchPokemon(team, pokeId);
+}
+
+function removePokemonFromTeam(team, pokeId) {
+  if (!canDropPokemon(team, pokeId)) return null;
+  const dropped = team.picks.find(p => p.id === pokeId) ?? null;
+  team.picks = team.picks.filter(p => p.id !== pokeId);
+  team.activeIds = (team.activeIds ?? []).filter(id => id !== pokeId);
+  return dropped;
+}
+
+function selectedFreeAgentDrop(team) {
+  return canDropPokemon(team, faDropId) ? team.picks.find(p => p.id === faDropId) : null;
+}
+
+function canSignFreeAgent(team, poke) {
+  if (!team || !poke || !canAddPokemonToTeam(team, poke)) return false;
+  if (rosterCount(team) < rosterLimit()) return true;
+  return Boolean(selectedFreeAgentDrop(team));
 }
 
 function typeEffectiveness(attackingType, defendingTypes = []) {
@@ -908,6 +947,7 @@ function createSeason() {
       numTeams,
       numRounds,
       activeRosterSize: ACTIVE_ROSTER_SIZE,
+      maxRosterSize: MAX_ROSTER_SIZE,
       maxGenIdx: GENS.length - 1,
     },
     currentDraftId: draftNumber,
@@ -943,6 +983,7 @@ function syncSeason(phase = SEASON_PHASES.DRAFT, draftStatus = 'inProgress') {
   activeSeason.settings.numTeams = numTeams;
   activeSeason.settings.numRounds = numRounds;
   activeSeason.settings.activeRosterSize = ACTIVE_ROSTER_SIZE;
+  activeSeason.settings.maxRosterSize ??= MAX_ROSTER_SIZE;
   activeSeason.settings.maxGenIdx ??= GENS.length - 1;
   activeSeason.teams = teams.map(serializeTeam);
   activeSeason.standings = buildSeasonStandings();
@@ -1403,6 +1444,7 @@ async function startDraft() {
   draftedIds = new Set();
   season = null;
   selectedBattleLogs = { season: null, playoff: null };
+  faSort = 'recommended'; faSearch = ''; faType = ''; faTeamIdx = 0; faDropId = null; faNotice = '';
   numTeams = Math.min(MAX_TEAMS, parseInt(document.getElementById('numTeamsRange').value));
   numRounds = DRAFT_ROUNDS;
   updateRounds();
@@ -2249,6 +2291,7 @@ function showFreeAgentScreen() {
   document.getElementById('freeAgentScreen').style.display = 'flex';
 
   faTeamIdx = teams[faTeamIdx] ? faTeamIdx : 0;
+  if (!canDropPokemon(teams[faTeamIdx], faDropId)) faDropId = null;
   const gen = GENS[currentGenIdx];
   document.getElementById('freeAgentTitle').textContent = `${gen.label} Free Agents`;
   populateFreeAgentControls();
@@ -2308,14 +2351,20 @@ function freeAgentDisplayList() {
 
 function renderFreeAgentScreen() {
   const team = teams[faTeamIdx] ?? teams[0];
+  if (!canDropPokemon(team, faDropId)) faDropId = null;
   const list = freeAgentDisplayList();
   const grid = document.getElementById('freeAgentGrid');
   const sub = document.getElementById('freeAgentSub');
   const teamPanel = document.getElementById('freeAgentTeam');
   const rosterPanel = document.getElementById('freeAgentRoster');
+  const limit = rosterLimit();
+  const count = rosterCount(team);
+  const benchCount = Math.max(0, count - ACTIVE_ROSTER_SIZE);
+  const atLimit = count >= limit;
+  const selectedDrop = selectedFreeAgentDrop(team);
 
   if (sub) {
-    sub.textContent = `${list.length} available · signing adds bench depth`;
+    sub.textContent = `${list.length} available · ${limit} max roster · bench-only drops`;
   }
 
   if (teamPanel && team) {
@@ -2325,33 +2374,55 @@ function renderFreeAgentScreen() {
         <span>${team.name}</span>
         ${cpuBadgeHtml(team, 'free-agent-cpu-personality', { compact: true })}
       </div>
-      <div class="fa-team-meta">${team.picks.length} owned · ${(team.activeIds ?? []).length}/${ACTIVE_ROSTER_SIZE} active</div>
+      <div class="fa-team-meta">${count}/${limit} owned · ${(team.activeIds ?? []).length}/${ACTIVE_ROSTER_SIZE} active · ${benchCount} bench</div>
+      <div class="fa-roster-limit ${atLimit ? 'at-limit' : ''}">
+        ${atLimit
+          ? (selectedDrop ? `At limit · signing will drop ${selectedDrop.name}` : 'At limit · choose a bench drop before signing')
+          : `${limit - count} roster slot${limit - count === 1 ? '' : 's'} open`}
+      </div>
+      <div class="fa-rule-note">Active roster Pokémon are protected. Dropped bench Pokémon return to free agents.</div>
+      ${faNotice ? `<div class="fa-notice">${faNotice}</div>` : ''}
     `;
   }
 
   if (rosterPanel && team) {
+    const active = new Set(getActiveRosterIds(team));
     rosterPanel.innerHTML = [...team.picks]
-      .sort((a, b) => pokemonPower(b) - pokemonPower(a))
-      .map(p => `
-        <div class="fa-roster-chip">
+      .sort((a, b) => Number(active.has(b.id)) - Number(active.has(a.id)) || pokemonPower(b) - pokemonPower(a))
+      .map(p => {
+        const isActive = active.has(p.id);
+        const canDrop = canDropPokemon(team, p.id);
+        const selected = faDropId === p.id;
+        return `
+        <div class="fa-roster-chip${isActive ? ' active' : ''}${selected ? ' drop-selected' : ''}">
           <img src="${p.sprite}" alt="${p.name}">
           <span>${p.name}</span>
           <strong>${p.bst}</strong>
+          <small>${isActive ? 'Active' : 'Bench'}</small>
+          ${canDrop
+            ? `<button class="fa-drop-btn" onclick="selectFreeAgentDrop(${p.id})">${selected ? 'Marked' : 'Mark'}</button>`
+            : `<em>${isActive ? 'Locked' : 'Keep'}</em>`}
         </div>
-      `).join('') || '<div class="fa-empty">No owned Pokémon</div>';
+      `;
+      }).join('') || '<div class="fa-empty">No owned Pokémon</div>';
   }
 
   if (!grid) return;
   grid.innerHTML = list.length ? list.map(poke => {
     const rec = team ? draftRecommendationScore(poke, team) : null;
+    const canSign = canSignFreeAgent(team, poke);
+    const actionText = selectedDrop
+      ? `Sign / Drop ${selectedDrop.name}`
+      : (atLimit ? 'Choose Drop' : 'Sign');
     return `
-      <button class="free-agent-card" onclick="signFreeAgent(${poke.id})">
+      <button class="free-agent-card${canSign ? '' : ' disabled'}" onclick="signFreeAgent(${poke.id})"${canSign ? '' : ' disabled'}>
         ${rec ? `<span class="fa-fit" title="${recommendationTitle(rec)}">Fit ${rec.score}</span>` : ''}
         <img src="${poke.sprite}" alt="${poke.name}" onerror="this.style.visibility='hidden'">
         <span class="fa-num">#${String(poke.id).padStart(3, '0')}</span>
         <span class="fa-name">${poke.name}</span>
         <span class="fa-types">${typePills(poke.types)}</span>
         <strong>${poke.bst}</strong>
+        <span class="fa-card-action">${actionText}</span>
       </button>
     `;
   }).join('') : '<div class="fa-empty">No free agents match the current filters</div>';
@@ -2361,10 +2432,35 @@ function signFreeAgent(pokeId) {
   const team = teams[faTeamIdx];
   const poke = allPokemon.find(p => p.id === pokeId);
   if (!team || !poke || !canAddPokemonToTeam(team, poke)) return;
+  const selectedDrop = selectedFreeAgentDrop(team);
+  if (selectedDrop) {
+    removePokemonFromTeam(team, selectedDrop.id);
+    faNotice = `${selectedDrop.name} was dropped. ${poke.name} signed to ${team.name}.`;
+    faDropId = null;
+  } else if (rosterCount(team) >= rosterLimit()) {
+    faNotice = 'Choose a bench Pokémon to drop before signing at the roster limit.';
+    renderFreeAgentScreen();
+    return;
+  } else {
+    faNotice = `${poke.name} signed to ${team.name}.`;
+  }
   team.picks.push(poke);
   syncDraftedIdsWithOwnership();
   renderFreeAgentScreen();
   saveSeason(buildSeasonState(SEASON_PHASES.ROSTER_LOCK, 'complete'));
+}
+
+function selectFreeAgentDrop(pokeId) {
+  const team = teams[faTeamIdx];
+  if (!canDropPokemon(team, pokeId)) {
+    faNotice = 'Only bench Pokémon can be dropped from the free-agent screen.';
+    renderFreeAgentScreen();
+    return;
+  }
+  faDropId = faDropId === pokeId ? null : pokeId;
+  const selected = selectedFreeAgentDrop(team);
+  faNotice = selected ? `${selected.name} marked as the next drop.` : '';
+  renderFreeAgentScreen();
 }
 
 function filterFreeAgents(value) {
@@ -2385,10 +2481,14 @@ function sortFreeAgents(value) {
 function selectFreeAgentTeam(value) {
   const idx = Number(value);
   faTeamIdx = Number.isInteger(idx) && teams[idx] ? idx : 0;
+  faDropId = null;
+  faNotice = '';
   renderFreeAgentScreen();
 }
 
 function continueAfterFreeAgents() {
+  faDropId = null;
+  faNotice = '';
   saveSeason(buildSeasonState(SEASON_PHASES.ROSTER_LOCK, 'complete'));
   showSeasonScreen();
 }
@@ -2960,6 +3060,8 @@ async function continueToNextGen() {
   currentPickInRound = 0;
   cpuThinking = false;
   selectedBattleLogs = { season: null, playoff: null };
+  faDropId = null;
+  faNotice = '';
   clearBattlePlaybackTimer();
   battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
 
@@ -3092,6 +3194,7 @@ function restart() {
   battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
   _savedForResume = null;
   curSort = 'recommended'; curSearch = ''; curType = '';
+  faSort = 'recommended'; faSearch = ''; faType = ''; faTeamIdx = 0; faDropId = null; faNotice = '';
   document.getElementById('typeFilter').innerHTML = '<option value="">All Types</option>';
   document.getElementById('progressFill').style.width = '0%';
   document.getElementById('completeScreen').style.display = 'none';
