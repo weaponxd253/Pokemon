@@ -920,6 +920,12 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   font-family: 'Rajdhani', sans-serif; font-size: 14px;
 }
 
+.fa-search:disabled,
+.fa-select:disabled,
+.fa-pass-btn:disabled {
+  opacity: 0.55; cursor: wait;
+}
+
 .free-agent-layout {
   width: 100%; max-width: 1400px; margin: 0 auto;
   display: grid; grid-template-columns: minmax(0, 1fr) 320px;
@@ -1143,6 +1149,90 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 
 .fa-drop-btn:hover {
   background: rgba(255,215,0,0.1);
+}
+
+.fa-history {
+  width: 100%; max-width: 1400px; margin: 24px auto 0;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+
+.fa-history-summary {
+  min-height: 48px; padding: 0 14px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  cursor: pointer; list-style: none; color: var(--yellow);
+  font-family: 'Press Start 2P', monospace; font-size: 8px;
+}
+
+.fa-history-summary::-webkit-details-marker { display: none; }
+
+.fa-history-summary::before {
+  content: '>'; font-family: Arial, sans-serif; font-size: 16px;
+  transform: rotate(0deg); transition: transform 0.15s; color: var(--muted);
+}
+
+.fa-history[open] .fa-history-summary::before { transform: rotate(90deg); }
+.fa-history-summary span { flex: 1; }
+
+.fa-history-summary strong {
+  color: var(--muted); font-family: 'Rajdhani', sans-serif;
+  font-size: 12px; text-transform: uppercase;
+}
+
+.fa-history-body { border-top: 1px solid var(--border); padding: 12px; }
+
+.fa-history-filters {
+  display: grid; grid-template-columns: repeat(3, minmax(140px, 220px));
+  gap: 8px; margin-bottom: 10px;
+}
+
+.fa-history-list { display: grid; gap: 7px; }
+
+.fa-history-row {
+  display: grid; grid-template-columns: minmax(180px, 0.8fr) minmax(260px, 1.25fr) minmax(280px, 1fr);
+  align-items: center; gap: 12px; padding: 10px 12px;
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+}
+
+.fa-history-team-row,
+.fa-history-move,
+.fa-history-meta {
+  min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 7px;
+}
+
+.fa-history-team-row i {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+}
+
+.fa-history-team-row strong,
+.fa-history-move strong {
+  overflow-wrap: anywhere; text-transform: capitalize;
+}
+
+.fa-history-source {
+  padding: 2px 5px; border-radius: 4px; border: 1px solid var(--border);
+  color: var(--muted); font-size: 9px; font-weight: 700; text-transform: uppercase;
+}
+
+.fa-history-source.cpu { color: var(--yellow); border-color: rgba(255,215,0,0.35); }
+.fa-history-move { font-size: 13px; }
+
+.fa-history-drop {
+  color: #ff8e8e; padding-left: 8px; border-left: 1px solid var(--border);
+}
+
+.fa-history-open-slot { color: #83d6aa; }
+.fa-history-meta { color: var(--muted); font-size: 11px; }
+
+.fa-history-meta span:not(:last-child)::after {
+  content: '·'; margin-left: 7px; color: var(--border);
+}
+
+.fa-history-cpu-detail { color: var(--yellow); }
+
+.fa-history-empty {
+  padding: 18px; text-align: center; color: var(--muted);
+  background: var(--surface2); border: 1px dashed var(--border); border-radius: 6px;
 }
 
 .free-agent-actions {
@@ -2007,6 +2097,11 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 /* ═══════════════════════════════════════
    MOBILE RESPONSIVE  (≤ 640px)
    ═══════════════════════════════════════ */
+@media (max-width: 900px) {
+  .fa-history-row { grid-template-columns: minmax(180px, 0.8fr) minmax(260px, 1.2fr); }
+  .fa-history-meta { grid-column: 1 / -1; }
+}
+
 @media (max-width: 640px) {
 
   /* ── Setup ── */
@@ -2116,6 +2211,11 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   .free-agent-roster { max-height: 260px; }
   .fa-waiver-head { align-items: flex-start; flex-direction: column; }
   .fa-pass-btn { width: 100%; }
+  .fa-history-filters { grid-template-columns: 1fr; }
+  .fa-history-summary { padding: 0 10px; }
+  .fa-history-row { grid-template-columns: 1fr; gap: 7px; }
+  .fa-history-meta { grid-column: auto; }
+  .fa-history-drop { padding-left: 0; border-left: 0; }
   .free-agent-actions { flex-direction: column; }
   .btn-fa-primary, .btn-fa-secondary {
     width: 100%; padding: 16px;

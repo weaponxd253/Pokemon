@@ -106,7 +106,7 @@ const MAX_TEAMS = 12;
 const DRAFT_ROUNDS = 6;
 const ACTIVE_ROSTER_SIZE = 6;
 const MAX_ROSTER_SIZE = ACTIVE_ROSTER_SIZE + 2;
-const SAVE_VERSION = 4;
+const SAVE_VERSION = 5;
 
 // ── State ──
 let allPokemon = [];
@@ -120,7 +120,8 @@ let currentGenIdx = 0;
 let draftNumber = 1;
 let curSort = 'recommended', curSearch = '', curType = '';
 let faSort = 'recommended', faSearch = '', faType = '', faTeamIdx = 0;
-let faDropId = null, faNotice = '';
+let faHistoryDraft = 'current', faHistoryTeam = 'all', faHistoryMove = 'all';
+let faDropId = null, faNotice = '', faCpuThinking = false, faCpuPassStreak = 0;
 let cpuThinking = false;
 let season = null;
 let selectedBattleLogs = { season: null, playoff: null };
@@ -219,6 +220,51 @@ function normalizeSavedTeamList(teamList = [], fallbackList = []) {
   });
 }
 
+function normalizeFreeAgencyTransactions(transactions) {
+  if (!Array.isArray(transactions)) return [];
+
+  return transactions.flatMap((transaction, idx) => {
+    if (!transaction || transaction.action !== 'claim') return [];
+    if (!Number.isInteger(transaction.teamIdx) || !Number.isInteger(transaction.pokemonId)) return [];
+
+    const source = transaction.source === 'cpu' ? 'cpu' : 'human';
+    const droppedPokemonId = Number.isInteger(transaction.droppedPokemonId)
+      ? transaction.droppedPokemonId
+      : null;
+
+    return [{
+      id: typeof transaction.id === 'string' && transaction.id
+        ? transaction.id
+        : `fa-${transaction.draftId ?? 1}-${transaction.pokemonId}-${idx}`,
+      draftId: Number.isInteger(transaction.draftId) ? transaction.draftId : 1,
+      genIdx: Number.isInteger(transaction.genIdx) ? transaction.genIdx : 0,
+      timestamp: typeof transaction.timestamp === 'string'
+        ? transaction.timestamp
+        : new Date(0).toISOString(),
+      action: 'claim',
+      source,
+      teamIdx: transaction.teamIdx,
+      teamName: typeof transaction.teamName === 'string' ? transaction.teamName : `Team ${transaction.teamIdx + 1}`,
+      teamColor: typeof transaction.teamColor === 'string' ? transaction.teamColor : '',
+      pokemonId: transaction.pokemonId,
+      pokemonName: typeof transaction.pokemonName === 'string' ? transaction.pokemonName : `Pokemon #${transaction.pokemonId}`,
+      droppedPokemonId,
+      droppedPokemonName: droppedPokemonId !== null && typeof transaction.droppedPokemonName === 'string'
+        ? transaction.droppedPokemonName
+        : null,
+      waiverRankBefore: Number.isInteger(transaction.waiverRankBefore) && transaction.waiverRankBefore > 0
+        ? transaction.waiverRankBefore
+        : null,
+      cpuGain: source === 'cpu' && Number.isFinite(transaction.cpuGain)
+        ? transaction.cpuGain
+        : null,
+      cpuReason: source === 'cpu' && typeof transaction.cpuReason === 'string'
+        ? transaction.cpuReason
+        : null,
+    }];
+  });
+}
+
 function normalizeSavedSeason(saved, normalizedTeams) {
   if (!saved?.season) return saved?.season ?? null;
   const hasSeasonTeams = Array.isArray(saved.season.teams) && saved.season.teams.length > 0;
@@ -228,6 +274,7 @@ function normalizeSavedSeason(saved, normalizedTeams) {
     version: SAVE_VERSION,
     teams: seasonTeams,
     waiverOrder: normalizeTeamOrder(saved.season.waiverOrder, seasonTeams),
+    freeAgencyTransactions: normalizeFreeAgencyTransactions(saved.season.freeAgencyTransactions),
     settings: {
       ...(saved.season.settings ?? {}),
       numTeams: saved.season.settings?.numTeams ?? seasonTeams.length,
@@ -921,6 +968,52 @@ function waiverRank(teamIdx) {
   return idx >= 0 ? idx + 1 : null;
 }
 
+function recordFreeAgencyTransaction({
+  teamIdx,
+  pokemon,
+  droppedPokemon = null,
+  source = 'human',
+  waiverRankBefore = null,
+  gain = null,
+  reason = null,
+}) {
+  const team = teams[teamIdx];
+  if (!team || !Number.isInteger(pokemon?.id)) return null;
+
+  const activeSeason = ensureSeason();
+  activeSeason.freeAgencyTransactions = normalizeFreeAgencyTransactions(activeSeason.freeAgencyTransactions);
+  const normalizedSource = source === 'cpu' ? 'cpu' : 'human';
+  const timestamp = new Date().toISOString();
+  const sequence = activeSeason.freeAgencyTransactions.length + 1;
+  const transaction = {
+    id: `fa-${draftNumber}-${pokemon.id}-${Date.now()}-${sequence}`,
+    draftId: draftNumber,
+    genIdx: currentGenIdx,
+    timestamp,
+    action: 'claim',
+    source: normalizedSource,
+    teamIdx,
+    teamName: team.name,
+    teamColor: team.color,
+    pokemonId: pokemon.id,
+    pokemonName: pokemon.name,
+    droppedPokemonId: Number.isInteger(droppedPokemon?.id) ? droppedPokemon.id : null,
+    droppedPokemonName: Number.isInteger(droppedPokemon?.id) ? droppedPokemon.name : null,
+    waiverRankBefore: Number.isInteger(waiverRankBefore) && waiverRankBefore > 0
+      ? waiverRankBefore
+      : null,
+    cpuGain: normalizedSource === 'cpu' && Number.isFinite(gain)
+      ? Number(gain.toFixed(2))
+      : null,
+    cpuReason: normalizedSource === 'cpu' && typeof reason === 'string' && reason
+      ? reason
+      : null,
+  };
+
+  activeSeason.freeAgencyTransactions.push(transaction);
+  return transaction;
+}
+
 function rotateWaiverOrder(teamIdx = currentWaiverTeamIdx()) {
   const activeSeason = ensureSeason();
   const order = getWaiverOrder();
@@ -1034,6 +1127,7 @@ function createSeason() {
     champion: null,
     nextDraftOrder: [...draftOrderIndices],
     waiverOrder: initialWaiverOrder(),
+    freeAgencyTransactions: [],
   };
 }
 
@@ -1066,6 +1160,7 @@ function syncSeason(phase = SEASON_PHASES.DRAFT, draftStatus = 'inProgress') {
   activeSeason.champions ??= [];
   activeSeason.champion ??= null;
   activeSeason.waiverOrder = normalizeTeamOrder(activeSeason.waiverOrder, teams, initialWaiverOrder());
+  activeSeason.freeAgencyTransactions = normalizeFreeAgencyTransactions(activeSeason.freeAgencyTransactions);
 
   if (draftIdx >= 0) activeSeason.drafts[draftIdx] = draftRecord;
   else activeSeason.drafts.push(draftRecord);
@@ -1518,7 +1613,7 @@ async function startDraft() {
   draftedIds = new Set();
   season = null;
   selectedBattleLogs = { season: null, playoff: null };
-  faSort = 'recommended'; faSearch = ''; faType = ''; faTeamIdx = 0; faDropId = null; faNotice = '';
+  faSort = 'recommended'; faSearch = ''; faType = ''; faTeamIdx = 0; faHistoryDraft = 'current'; faHistoryTeam = 'all'; faHistoryMove = 'all'; faDropId = null; faNotice = ''; faCpuThinking = false; faCpuPassStreak = 0;
   numTeams = Math.min(MAX_TEAMS, parseInt(document.getElementById('numTeamsRange').value));
   numRounds = DRAFT_ROUNDS;
   updateRounds();
@@ -1989,6 +2084,128 @@ function chooseCpuDraftEntry(scored, config) {
   return weightedCpuPoolPick(pool, config);
 }
 
+function cpuFreeAgentOpenThreshold(team) {
+  const key = cpuPersonalityKey(team);
+  const openSlots = Math.max(0, rosterLimit() - rosterCount(team));
+  const base = {
+    balanced: 64,
+    power: 66,
+    speed: 64,
+    bulky: 63,
+    coverage: 61,
+  }[key] ?? 64;
+  return openSlots > 1 ? base - 4 : base;
+}
+
+function cpuFreeAgentUpgradeThreshold(team) {
+  return {
+    balanced: 7,
+    power: 6,
+    speed: 6,
+    bulky: 6,
+    coverage: 5,
+  }[cpuPersonalityKey(team)] ?? 7;
+}
+
+function cpuBenchDropCandidate(team) {
+  const bench = (team?.picks ?? []).filter(p => canDropPokemon(team, p.id));
+  if (!bench.length) return null;
+  return bench
+    .map(poke => ({ poke, ...cpuDraftScore(poke, team) }))
+    .sort((a, b) => a.score - b.score || pokemonPower(a.poke) - pokemonPower(b.poke))[0];
+}
+
+function cpuFreeAgentDecision(team) {
+  const available = freeAgentPokemon(allPokemon);
+  if (!team || !available.length) return { action: 'pass', reason: 'no free agents' };
+  if (team.isCpu && !isValidCpuPersonality(team.cpuPersonality)) {
+    normalizeCpuPersonalities(teams);
+  }
+
+  const config = cpuPersonalityConfig(team);
+  const openSlots = Math.max(0, rosterLimit() - rosterCount(team));
+  const replacement = openSlots ? null : cpuBenchDropCandidate(team);
+  if (!openSlots && !replacement) return { action: 'pass', reason: 'no bench drop' };
+
+  const openThreshold = cpuFreeAgentOpenThreshold(team);
+  const upgradeThreshold = cpuFreeAgentUpgradeThreshold(team);
+  const scored = available
+    .map(poke => {
+      const score = cpuDraftScore(poke, team);
+      const gain = replacement ? score.score - replacement.score : score.score - openThreshold;
+      return {
+        poke,
+        ...score,
+        gain: Number(gain.toFixed(2)),
+        dropId: replacement?.poke.id ?? null,
+        dropName: replacement?.poke.name ?? '',
+      };
+    })
+    .filter(entry => openSlots ? entry.score >= openThreshold : entry.gain >= upgradeThreshold)
+    .sort((a, b) =>
+      b.gain - a.gain ||
+      b.score - a.score ||
+      b.poke.bst - a.poke.bst ||
+      a.poke.id - b.poke.id
+    );
+
+  const choice = chooseCpuDraftEntry(scored, config);
+  if (!choice) return { action: 'pass', reason: openSlots ? 'no fit' : 'no upgrade' };
+  return {
+    action: 'claim',
+    reason: openSlots ? 'open roster fit' : 'roster upgrade',
+    ...choice,
+  };
+}
+
+function triggerCpuFreeAgencyIfNeeded() {
+  const screen = document.getElementById('freeAgentScreen');
+  if (!screen || screen.style.display === 'none') return;
+  if (faCpuThinking || faCpuPassStreak >= teams.length) return;
+
+  const teamIdx = currentWaiverTeamIdx();
+  const team = teams[teamIdx];
+  if (!team?.isCpu) return;
+
+  faTeamIdx = teamIdx;
+  faDropId = null;
+  faCpuThinking = true;
+  faNotice = `${team.name} is evaluating waivers...`;
+  populateFreeAgentControls();
+  renderFreeAgentScreen();
+  setTimeout(cpuFreeAgentPick, 650 + Math.random() * 650);
+}
+
+function cpuFreeAgentPick() {
+  const screen = document.getElementById('freeAgentScreen');
+  if (!screen || screen.style.display === 'none') {
+    faCpuThinking = false;
+    return;
+  }
+  const teamIdx = currentWaiverTeamIdx();
+  const team = teams[teamIdx];
+  if (!team?.isCpu) {
+    faCpuThinking = false;
+    renderFreeAgentScreen();
+    return;
+  }
+
+  const decision = cpuFreeAgentDecision(team);
+  faCpuThinking = false;
+  faTeamIdx = teamIdx;
+  faDropId = decision.dropId ?? null;
+
+  if (decision.action === 'claim') {
+    claimFreeAgent(decision.poke.id, {
+      source: 'cpu',
+      gain: decision.gain,
+      reason: decision.reason,
+    });
+  } else {
+    passWaiverClaim({ source: 'cpu', reason: decision.reason });
+  }
+}
+
 function cpuPick() {
   const team = teams[currentTeamIdx()];
   const available = availablePokemon();
@@ -2366,12 +2583,15 @@ function showFreeAgentScreen() {
 
   getWaiverOrder();
   faTeamIdx = currentWaiverTeamIdx();
+  faCpuPassStreak = 0;
+  faCpuThinking = false;
   if (!canDropPokemon(teams[faTeamIdx], faDropId)) faDropId = null;
   const gen = GENS[currentGenIdx];
   document.getElementById('freeAgentTitle').textContent = `${gen.label} Free Agents`;
   populateFreeAgentControls();
   renderFreeAgentScreen();
   saveSeason(buildSeasonState(SEASON_PHASES.ROSTER_LOCK, 'complete'));
+  triggerCpuFreeAgencyIfNeeded();
 }
 
 function populateFreeAgentControls() {
@@ -2386,6 +2606,7 @@ function populateFreeAgentControls() {
       typeSelect.appendChild(option);
     });
     typeSelect.value = faType;
+    typeSelect.disabled = faCpuThinking;
   }
 
   const teamSelect = document.getElementById('faTeamSelect');
@@ -2394,11 +2615,98 @@ function populateFreeAgentControls() {
       `<option value="${idx}">${idx === currentWaiverTeamIdx() ? '★ ' : ''}${team.name}${team.isCpu ? ` (${cpuPersonalityLabel(team)} CPU)` : ''}</option>`
     ).join('');
     teamSelect.value = String(faTeamIdx);
+    teamSelect.disabled = faCpuThinking;
   }
   const search = document.getElementById('faSearch');
-  if (search) search.value = faSearch;
+  if (search) {
+    search.value = faSearch;
+    search.disabled = faCpuThinking;
+  }
   const sort = document.getElementById('faSort');
-  if (sort) sort.value = faSort;
+  if (sort) {
+    sort.value = faSort;
+    sort.disabled = faCpuThinking;
+  }
+  populateFreeAgencyHistoryControls();
+}
+
+function populateFreeAgencyHistoryControls() {
+  const draftSelect = document.getElementById('faHistoryDraft');
+  if (draftSelect) draftSelect.value = faHistoryDraft;
+
+  const teamSelect = document.getElementById('faHistoryTeam');
+  if (teamSelect) {
+    teamSelect.innerHTML = [
+      '<option value="all">All Teams</option>',
+      ...teams.map((team, idx) => `<option value="${idx}">${team.name}</option>`),
+    ].join('');
+    teamSelect.value = teams[Number(faHistoryTeam)] ? faHistoryTeam : 'all';
+    if (teamSelect.value !== faHistoryTeam) faHistoryTeam = 'all';
+  }
+
+  const moveSelect = document.getElementById('faHistoryMove');
+  if (moveSelect) moveSelect.value = faHistoryMove;
+}
+
+function freeAgencyHistoryTransactions() {
+  const transactions = normalizeFreeAgencyTransactions(season?.freeAgencyTransactions);
+  return transactions
+    .filter(transaction => faHistoryDraft === 'all' || transaction.draftId === draftNumber)
+    .filter(transaction => faHistoryTeam === 'all' || transaction.teamIdx === Number(faHistoryTeam))
+    .filter(transaction => faHistoryMove !== 'drops' || transaction.droppedPokemonId !== null)
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp) || b.id.localeCompare(a.id));
+}
+
+function freeAgencyHistoryTimestamp(timestamp) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime()) || date.getTime() === 0) return '';
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function renderFreeAgencyHistory() {
+  const list = document.getElementById('faHistoryList');
+  const count = document.getElementById('faHistoryCount');
+  if (!list || !count) return;
+
+  const transactions = freeAgencyHistoryTransactions();
+  count.textContent = `${transactions.length} move${transactions.length === 1 ? '' : 's'}`;
+  list.innerHTML = transactions.length ? transactions.map(transaction => {
+    const genLabel = GENS[transaction.genIdx]?.label ?? `Generation ${transaction.genIdx + 1}`;
+    const timeLabel = freeAgencyHistoryTimestamp(transaction.timestamp);
+    const cpuDetails = transaction.source === 'cpu'
+      ? [
+          Number.isFinite(transaction.cpuGain) ? `Upgrade +${transaction.cpuGain}` : '',
+          transaction.cpuReason || '',
+        ].filter(Boolean).join(' · ')
+      : '';
+    return `
+      <article class="fa-history-row">
+        <div class="fa-history-team-row">
+          <i style="background:${transaction.teamColor}"></i>
+          <strong>${transaction.teamName}</strong>
+          <span class="fa-history-source ${transaction.source}">${transaction.source === 'cpu' ? 'CPU' : 'Human'}</span>
+        </div>
+        <div class="fa-history-move">
+          <span>Claimed <strong>${transaction.pokemonName}</strong></span>
+          ${transaction.droppedPokemonId !== null
+            ? `<span class="fa-history-drop">Dropped <strong>${transaction.droppedPokemonName}</strong></span>`
+            : '<span class="fa-history-open-slot">Open roster slot</span>'}
+        </div>
+        <div class="fa-history-meta">
+          <span>Draft ${transaction.draftId}</span>
+          <span>${genLabel}</span>
+          <span>Waiver #${transaction.waiverRankBefore ?? '-'}</span>
+          ${timeLabel ? `<span>${timeLabel}</span>` : ''}
+          ${cpuDetails ? `<span class="fa-history-cpu-detail">${cpuDetails}</span>` : ''}
+        </div>
+      </article>
+    `;
+  }).join('') : '<div class="fa-history-empty">No transactions match these filters.</div>';
 }
 
 function freeAgentDisplayList() {
@@ -2457,7 +2765,7 @@ function renderFreeAgentScreen() {
       <div class="fa-waiver-panel">
         <div class="fa-waiver-head">
           <span>${currentClaimTeam ? `${currentClaimTeam.name} on claim` : 'Waiver claim order'}</span>
-          <button class="fa-pass-btn" onclick="passWaiverClaim()">Pass Claim</button>
+          <button class="fa-pass-btn" onclick="passWaiverClaim()"${faCpuThinking ? ' disabled' : ''}>Pass Claim</button>
         </div>
         <div class="fa-waiver-pills">${waiverOrderPills()}</div>
       </div>
@@ -2468,7 +2776,7 @@ function renderFreeAgentScreen() {
           ? (selectedDrop ? `At limit · signing will drop ${selectedDrop.name}` : 'At limit · choose a bench drop before signing')
           : `${limit - count} roster slot${limit - count === 1 ? '' : 's'} open`}
       </div>
-      <div class="fa-rule-note">Only the team first in waiver order can claim. Active roster Pokémon are protected.</div>
+      <div class="fa-rule-note">${faCpuThinking ? 'CPU free agency is resolving.' : 'Only the team first in waiver order can claim. Active roster Pokémon are protected.'}</div>
       ${faNotice ? `<div class="fa-notice">${faNotice}</div>` : ''}
     `;
   }
@@ -2495,12 +2803,15 @@ function renderFreeAgentScreen() {
       }).join('') || '<div class="fa-empty">No owned Pokémon</div>';
   }
 
+  renderFreeAgencyHistory();
+
   if (!grid) return;
   grid.innerHTML = list.length ? list.map(poke => {
     const rec = team ? draftRecommendationScore(poke, team) : null;
-    const canClaim = canClaimFreeAgent(team, poke, faTeamIdx);
+    const canClaim = canClaimFreeAgent(team, poke, faTeamIdx) && !faCpuThinking;
     const actionText = !onClock
       ? 'Waiting'
+      : faCpuThinking ? 'CPU Thinking'
       : selectedDrop ? `Claim / Drop ${selectedDrop.name}`
       : (atLimit ? 'Choose Drop' : 'Claim');
     return `
@@ -2517,7 +2828,8 @@ function renderFreeAgentScreen() {
   }).join('') : '<div class="fa-empty">No free agents match the current filters</div>';
 }
 
-function claimFreeAgent(pokeId) {
+function claimFreeAgent(pokeId, options = {}) {
+  if (faCpuThinking && options.source !== 'cpu') return;
   const teamIdx = faTeamIdx;
   const team = teams[faTeamIdx];
   const poke = allPokemon.find(p => p.id === pokeId);
@@ -2528,41 +2840,65 @@ function claimFreeAgent(pokeId) {
     renderFreeAgentScreen();
     return;
   }
+  const waiverRankBefore = waiverRank(teamIdx);
   const selectedDrop = selectedFreeAgentDrop(team);
   let claimNotice;
   if (selectedDrop) {
     removePokemonFromTeam(team, selectedDrop.id);
-    claimNotice = `${selectedDrop.name} was dropped. ${poke.name} claimed by ${team.name}.`;
+    claimNotice = options.source === 'cpu'
+      ? `${team.name} claimed ${poke.name} and dropped ${selectedDrop.name}.`
+      : `${selectedDrop.name} was dropped. ${poke.name} claimed by ${team.name}.`;
     faDropId = null;
   } else if (rosterCount(team) >= rosterLimit()) {
     faNotice = 'Choose a bench Pokémon to drop before signing at the roster limit.';
     renderFreeAgentScreen();
     return;
   } else {
-    claimNotice = `${poke.name} claimed by ${team.name}.`;
+    claimNotice = options.source === 'cpu'
+      ? `${team.name} claimed ${poke.name}.`
+      : `${poke.name} claimed by ${team.name}.`;
   }
   team.picks.push(poke);
   syncDraftedIdsWithOwnership();
+  recordFreeAgencyTransaction({
+    teamIdx,
+    pokemon: poke,
+    droppedPokemon: selectedDrop,
+    source: options.source,
+    waiverRankBefore,
+    gain: options.gain,
+    reason: options.reason,
+  });
+  faCpuPassStreak = 0;
   rotateWaiverOrder(teamIdx);
   faTeamIdx = currentWaiverTeamIdx();
   const nextTeam = teams[faTeamIdx];
-  faNotice = `${claimNotice} ${nextTeam ? `${nextTeam.name} is next on claim.` : ''}`;
+  const gainText = options.source === 'cpu' && Number.isFinite(options.gain)
+    ? ` Upgrade +${options.gain}.`
+    : '';
+  faNotice = `${claimNotice}${gainText} ${nextTeam ? `${nextTeam.name} is next on claim.` : ''}`;
   populateFreeAgentControls();
   renderFreeAgentScreen();
   saveSeason(buildSeasonState(SEASON_PHASES.ROSTER_LOCK, 'complete'));
+  triggerCpuFreeAgencyIfNeeded();
 }
 
-function passWaiverClaim() {
+function passWaiverClaim(options = {}) {
+  if (faCpuThinking && options.source !== 'cpu') return;
   const passingIdx = currentWaiverTeamIdx();
   const passingTeam = teams[passingIdx];
   rotateWaiverOrder(passingIdx);
   faTeamIdx = currentWaiverTeamIdx();
   faDropId = null;
+  faCpuPassStreak++;
   const nextTeam = teams[faTeamIdx];
-  faNotice = `${passingTeam?.name ?? 'Team'} passed. ${nextTeam ? `${nextTeam.name} is next on claim.` : ''}`;
+  const reason = options.source === 'cpu' && options.reason ? ` (${options.reason})` : '';
+  const cycleDone = faCpuPassStreak >= teams.length ? ' All teams have passed this waiver cycle.' : '';
+  faNotice = `${passingTeam?.name ?? 'Team'} passed${reason}. ${nextTeam ? `${nextTeam.name} is next on claim.` : ''}${cycleDone}`;
   populateFreeAgentControls();
   renderFreeAgentScreen();
   saveSeason(buildSeasonState(SEASON_PHASES.ROSTER_LOCK, 'complete'));
+  triggerCpuFreeAgencyIfNeeded();
 }
 
 function signFreeAgent(pokeId) {
@@ -2570,6 +2906,7 @@ function signFreeAgent(pokeId) {
 }
 
 function selectFreeAgentDrop(pokeId) {
+  if (faCpuThinking) return;
   const team = teams[faTeamIdx];
   if (!canDropPokemon(team, pokeId)) {
     faNotice = 'Only bench Pokémon can be dropped from the free-agent screen.';
@@ -2582,22 +2919,41 @@ function selectFreeAgentDrop(pokeId) {
   renderFreeAgentScreen();
 }
 
+function filterFreeAgencyHistoryDraft(value) {
+  faHistoryDraft = value === 'all' ? 'all' : 'current';
+  renderFreeAgencyHistory();
+}
+
+function filterFreeAgencyHistoryTeam(value) {
+  faHistoryTeam = value === 'all' || teams[Number(value)] ? value : 'all';
+  renderFreeAgencyHistory();
+}
+
+function filterFreeAgencyHistoryMove(value) {
+  faHistoryMove = value === 'drops' ? 'drops' : 'all';
+  renderFreeAgencyHistory();
+}
+
 function filterFreeAgents(value) {
+  if (faCpuThinking) return;
   faSearch = value.toLowerCase();
   renderFreeAgentScreen();
 }
 
 function filterFreeAgentType(value) {
+  if (faCpuThinking) return;
   faType = value;
   renderFreeAgentScreen();
 }
 
 function sortFreeAgents(value) {
+  if (faCpuThinking) return;
   faSort = value;
   renderFreeAgentScreen();
 }
 
 function selectFreeAgentTeam(value) {
+  if (faCpuThinking) return;
   const idx = Number(value);
   faTeamIdx = Number.isInteger(idx) && teams[idx] ? idx : 0;
   faDropId = null;
@@ -2608,6 +2964,8 @@ function selectFreeAgentTeam(value) {
 function continueAfterFreeAgents() {
   faDropId = null;
   faNotice = '';
+  faCpuThinking = false;
+  faCpuPassStreak = 0;
   saveSeason(buildSeasonState(SEASON_PHASES.ROSTER_LOCK, 'complete'));
   showSeasonScreen();
 }
@@ -3314,7 +3672,7 @@ function restart() {
   battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
   _savedForResume = null;
   curSort = 'recommended'; curSearch = ''; curType = '';
-  faSort = 'recommended'; faSearch = ''; faType = ''; faTeamIdx = 0; faDropId = null; faNotice = '';
+  faSort = 'recommended'; faSearch = ''; faType = ''; faTeamIdx = 0; faHistoryDraft = 'current'; faHistoryTeam = 'all'; faHistoryMove = 'all'; faDropId = null; faNotice = ''; faCpuThinking = false; faCpuPassStreak = 0;
   document.getElementById('typeFilter').innerHTML = '<option value="">All Types</option>';
   document.getElementById('progressFill').style.width = '0%';
   document.getElementById('completeScreen').style.display = 'none';

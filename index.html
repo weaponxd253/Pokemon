@@ -163,6 +163,29 @@
     </div>
   </div>
 
+  <details class="fa-history" open>
+    <summary class="fa-history-summary">
+      <span>Transaction History</span>
+      <strong id="faHistoryCount">0 moves</strong>
+    </summary>
+    <div class="fa-history-body">
+      <div class="fa-history-filters">
+        <select class="fa-select" id="faHistoryDraft" onchange="filterFreeAgencyHistoryDraft(this.value)">
+          <option value="current">Current Draft</option>
+          <option value="all">All Drafts</option>
+        </select>
+        <select class="fa-select" id="faHistoryTeam" onchange="filterFreeAgencyHistoryTeam(this.value)">
+          <option value="all">All Teams</option>
+        </select>
+        <select class="fa-select" id="faHistoryMove" onchange="filterFreeAgencyHistoryMove(this.value)">
+          <option value="all">All Claims</option>
+          <option value="drops">Claims With Drops</option>
+        </select>
+      </div>
+      <div class="fa-history-list" id="faHistoryList"></div>
+    </div>
+  </details>
+
   <div class="free-agent-actions">
     <button class="btn-fa-secondary" onclick="showRosterScreen()">Back to Rosters</button>
     <button class="btn-fa-primary" onclick="continueAfterFreeAgents()">Continue to Season</button>
