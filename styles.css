@@ -1235,6 +1235,27 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   background: var(--surface2); border: 1px dashed var(--border); border-radius: 6px;
 }
 
+.fa-waiver-activity { margin-top: 10px; }
+
+.fa-waiver-event {
+  display: grid; grid-template-columns: minmax(180px, 0.8fr) minmax(260px, 1.25fr) minmax(280px, 1fr);
+  align-items: center; gap: 12px; padding: 10px 12px;
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+}
+
+.fa-waiver-event.cycle-complete { border-color: rgba(255,215,0,0.45); }
+
+.fa-waiver-action {
+  min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 7px;
+  font-size: 13px;
+}
+
+.fa-waiver-action > span {
+  padding-left: 8px; border-left: 1px solid var(--border); color: var(--muted);
+}
+
+.fa-waiver-action .fa-cycle-complete { color: var(--yellow); font-weight: 700; }
+
 .free-agent-actions {
   display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
   width: 100%; max-width: 1400px; margin: 28px auto 0;
@@ -2098,7 +2119,8 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
    MOBILE RESPONSIVE  (≤ 640px)
    ═══════════════════════════════════════ */
 @media (max-width: 900px) {
-  .fa-history-row { grid-template-columns: minmax(180px, 0.8fr) minmax(260px, 1.2fr); }
+  .fa-history-row,
+  .fa-waiver-event { grid-template-columns: minmax(180px, 0.8fr) minmax(260px, 1.2fr); }
   .fa-history-meta { grid-column: 1 / -1; }
 }
 
@@ -2213,9 +2235,11 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   .fa-pass-btn { width: 100%; }
   .fa-history-filters { grid-template-columns: 1fr; }
   .fa-history-summary { padding: 0 10px; }
-  .fa-history-row { grid-template-columns: 1fr; gap: 7px; }
+  .fa-history-row,
+  .fa-waiver-event { grid-template-columns: 1fr; gap: 7px; }
   .fa-history-meta { grid-column: auto; }
-  .fa-history-drop { padding-left: 0; border-left: 0; }
+  .fa-history-drop,
+  .fa-waiver-action > span { padding-left: 0; border-left: 0; }
   .free-agent-actions { flex-direction: column; }
   .btn-fa-primary, .btn-fa-secondary {
     width: 100%; padding: 16px;

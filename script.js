@@ -106,7 +106,7 @@ const MAX_TEAMS = 12;
 const DRAFT_ROUNDS = 6;
 const ACTIVE_ROSTER_SIZE = 6;
 const MAX_ROSTER_SIZE = ACTIVE_ROSTER_SIZE + 2;
-const SAVE_VERSION = 5;
+const SAVE_VERSION = 6;
 
 // ── State ──
 let allPokemon = [];
@@ -121,6 +121,7 @@ let draftNumber = 1;
 let curSort = 'recommended', curSearch = '', curType = '';
 let faSort = 'recommended', faSearch = '', faType = '', faTeamIdx = 0;
 let faHistoryDraft = 'current', faHistoryTeam = 'all', faHistoryMove = 'all';
+let faWaiverDraft = 'current', faWaiverTeam = 'all', faWaiverSource = 'all';
 let faDropId = null, faNotice = '', faCpuThinking = false, faCpuPassStreak = 0;
 let cpuThinking = false;
 let season = null;
@@ -265,6 +266,40 @@ function normalizeFreeAgencyTransactions(transactions) {
   });
 }
 
+function normalizeWaiverEvents(events) {
+  if (!Array.isArray(events)) return [];
+
+  return events.flatMap((event, idx) => {
+    if (!event || event.action !== 'pass' || !Number.isInteger(event.teamIdx)) return [];
+    const source = event.source === 'cpu' ? 'cpu' : 'human';
+    return [{
+      id: typeof event.id === 'string' && event.id
+        ? event.id
+        : `waiver-pass-${event.draftId ?? 1}-${event.teamIdx}-${idx}`,
+      draftId: Number.isInteger(event.draftId) ? event.draftId : 1,
+      genIdx: Number.isInteger(event.genIdx) ? event.genIdx : 0,
+      timestamp: typeof event.timestamp === 'string'
+        ? event.timestamp
+        : new Date(0).toISOString(),
+      action: 'pass',
+      source,
+      teamIdx: event.teamIdx,
+      teamName: typeof event.teamName === 'string' ? event.teamName : `Team ${event.teamIdx + 1}`,
+      teamColor: typeof event.teamColor === 'string' ? event.teamColor : '',
+      waiverRankBefore: Number.isInteger(event.waiverRankBefore) && event.waiverRankBefore > 0
+        ? event.waiverRankBefore
+        : null,
+      nextTeamIdx: Number.isInteger(event.nextTeamIdx) ? event.nextTeamIdx : null,
+      nextTeamName: typeof event.nextTeamName === 'string' ? event.nextTeamName : null,
+      reason: source === 'cpu' && typeof event.reason === 'string' ? event.reason : null,
+      passNumberInCycle: Number.isInteger(event.passNumberInCycle) && event.passNumberInCycle > 0
+        ? event.passNumberInCycle
+        : null,
+      cycleComplete: Boolean(event.cycleComplete),
+    }];
+  });
+}
+
 function normalizeSavedSeason(saved, normalizedTeams) {
   if (!saved?.season) return saved?.season ?? null;
   const hasSeasonTeams = Array.isArray(saved.season.teams) && saved.season.teams.length > 0;
@@ -275,6 +310,7 @@ function normalizeSavedSeason(saved, normalizedTeams) {
     teams: seasonTeams,
     waiverOrder: normalizeTeamOrder(saved.season.waiverOrder, seasonTeams),
     freeAgencyTransactions: normalizeFreeAgencyTransactions(saved.season.freeAgencyTransactions),
+    waiverEvents: normalizeWaiverEvents(saved.season.waiverEvents),
     settings: {
       ...(saved.season.settings ?? {}),
       numTeams: saved.season.settings?.numTeams ?? seasonTeams.length,
@@ -1014,6 +1050,51 @@ function recordFreeAgencyTransaction({
   return transaction;
 }
 
+function recordWaiverPass({
+  teamIdx,
+  source = 'human',
+  waiverRankBefore = null,
+  nextTeamIdx = null,
+  reason = null,
+  passNumberInCycle = null,
+  cycleComplete = false,
+}) {
+  const team = teams[teamIdx];
+  if (!team) return null;
+
+  const activeSeason = ensureSeason();
+  activeSeason.waiverEvents = normalizeWaiverEvents(activeSeason.waiverEvents);
+  const normalizedSource = source === 'cpu' ? 'cpu' : 'human';
+  const nextTeam = Number.isInteger(nextTeamIdx) ? teams[nextTeamIdx] : null;
+  const sequence = activeSeason.waiverEvents.length + 1;
+  const event = {
+    id: `waiver-pass-${draftNumber}-${teamIdx}-${Date.now()}-${sequence}`,
+    draftId: draftNumber,
+    genIdx: currentGenIdx,
+    timestamp: new Date().toISOString(),
+    action: 'pass',
+    source: normalizedSource,
+    teamIdx,
+    teamName: team.name,
+    teamColor: team.color,
+    waiverRankBefore: Number.isInteger(waiverRankBefore) && waiverRankBefore > 0
+      ? waiverRankBefore
+      : null,
+    nextTeamIdx: nextTeam ? nextTeamIdx : null,
+    nextTeamName: nextTeam?.name ?? null,
+    reason: normalizedSource === 'cpu' && typeof reason === 'string' && reason
+      ? reason
+      : null,
+    passNumberInCycle: Number.isInteger(passNumberInCycle) && passNumberInCycle > 0
+      ? passNumberInCycle
+      : null,
+    cycleComplete: Boolean(cycleComplete),
+  };
+
+  activeSeason.waiverEvents.push(event);
+  return event;
+}
+
 function rotateWaiverOrder(teamIdx = currentWaiverTeamIdx()) {
   const activeSeason = ensureSeason();
   const order = getWaiverOrder();
@@ -1128,6 +1209,7 @@ function createSeason() {
     nextDraftOrder: [...draftOrderIndices],
     waiverOrder: initialWaiverOrder(),
     freeAgencyTransactions: [],
+    waiverEvents: [],
   };
 }
 
@@ -1161,6 +1243,7 @@ function syncSeason(phase = SEASON_PHASES.DRAFT, draftStatus = 'inProgress') {
   activeSeason.champion ??= null;
   activeSeason.waiverOrder = normalizeTeamOrder(activeSeason.waiverOrder, teams, initialWaiverOrder());
   activeSeason.freeAgencyTransactions = normalizeFreeAgencyTransactions(activeSeason.freeAgencyTransactions);
+  activeSeason.waiverEvents = normalizeWaiverEvents(activeSeason.waiverEvents);
 
   if (draftIdx >= 0) activeSeason.drafts[draftIdx] = draftRecord;
   else activeSeason.drafts.push(draftRecord);
@@ -1613,7 +1696,7 @@ async function startDraft() {
   draftedIds = new Set();
   season = null;
   selectedBattleLogs = { season: null, playoff: null };
-  faSort = 'recommended'; faSearch = ''; faType = ''; faTeamIdx = 0; faHistoryDraft = 'current'; faHistoryTeam = 'all'; faHistoryMove = 'all'; faDropId = null; faNotice = ''; faCpuThinking = false; faCpuPassStreak = 0;
+  faSort = 'recommended'; faSearch = ''; faType = ''; faTeamIdx = 0; faHistoryDraft = 'current'; faHistoryTeam = 'all'; faHistoryMove = 'all'; faWaiverDraft = 'current'; faWaiverTeam = 'all'; faWaiverSource = 'all'; faDropId = null; faNotice = ''; faCpuThinking = false; faCpuPassStreak = 0;
   numTeams = Math.min(MAX_TEAMS, parseInt(document.getElementById('numTeamsRange').value));
   numRounds = DRAFT_ROUNDS;
   updateRounds();
@@ -2628,6 +2711,7 @@ function populateFreeAgentControls() {
     sort.disabled = faCpuThinking;
   }
   populateFreeAgencyHistoryControls();
+  populateWaiverActivityControls();
 }
 
 function populateFreeAgencyHistoryControls() {
@@ -2707,6 +2791,68 @@ function renderFreeAgencyHistory() {
       </article>
     `;
   }).join('') : '<div class="fa-history-empty">No transactions match these filters.</div>';
+}
+
+function populateWaiverActivityControls() {
+  const draftSelect = document.getElementById('faWaiverDraft');
+  if (draftSelect) draftSelect.value = faWaiverDraft;
+
+  const teamSelect = document.getElementById('faWaiverTeam');
+  if (teamSelect) {
+    teamSelect.innerHTML = [
+      '<option value="all">All Teams</option>',
+      ...teams.map((team, idx) => `<option value="${idx}">${team.name}</option>`),
+    ].join('');
+    teamSelect.value = teams[Number(faWaiverTeam)] ? faWaiverTeam : 'all';
+    if (teamSelect.value !== faWaiverTeam) faWaiverTeam = 'all';
+  }
+
+  const sourceSelect = document.getElementById('faWaiverSource');
+  if (sourceSelect) sourceSelect.value = faWaiverSource;
+}
+
+function waiverActivityEvents() {
+  const events = normalizeWaiverEvents(season?.waiverEvents);
+  return events
+    .filter(event => faWaiverDraft === 'all' || event.draftId === draftNumber)
+    .filter(event => faWaiverTeam === 'all' || event.teamIdx === Number(faWaiverTeam))
+    .filter(event => faWaiverSource === 'all' || event.source === faWaiverSource)
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp) || b.id.localeCompare(a.id));
+}
+
+function renderWaiverActivity() {
+  const list = document.getElementById('faWaiverList');
+  const count = document.getElementById('faWaiverCount');
+  if (!list || !count) return;
+
+  const events = waiverActivityEvents();
+  count.textContent = `${events.length} pass${events.length === 1 ? '' : 'es'}`;
+  list.innerHTML = events.length ? events.map(event => {
+    const genLabel = GENS[event.genIdx]?.label ?? `Generation ${event.genIdx + 1}`;
+    const timeLabel = freeAgencyHistoryTimestamp(event.timestamp);
+    return `
+      <article class="fa-waiver-event${event.cycleComplete ? ' cycle-complete' : ''}">
+        <div class="fa-history-team-row">
+          <i style="background:${event.teamColor}"></i>
+          <strong>${event.teamName}</strong>
+          <span class="fa-history-source ${event.source}">${event.source === 'cpu' ? 'CPU' : 'Human'}</span>
+        </div>
+        <div class="fa-waiver-action">
+          <strong>Passed</strong>
+          ${event.reason ? `<span>${event.reason}</span>` : ''}
+          ${event.nextTeamName ? `<span>Next: ${event.nextTeamName}</span>` : ''}
+          ${event.cycleComplete ? '<span class="fa-cycle-complete">Cycle complete</span>' : ''}
+        </div>
+        <div class="fa-history-meta">
+          <span>Draft ${event.draftId}</span>
+          <span>${genLabel}</span>
+          <span>Waiver #${event.waiverRankBefore ?? '-'}</span>
+          ${event.passNumberInCycle ? `<span>Pass ${event.passNumberInCycle}/${teams.length}</span>` : ''}
+          ${timeLabel ? `<span>${timeLabel}</span>` : ''}
+        </div>
+      </article>
+    `;
+  }).join('') : '<div class="fa-history-empty">No waiver passes match these filters.</div>';
 }
 
 function freeAgentDisplayList() {
@@ -2804,6 +2950,7 @@ function renderFreeAgentScreen() {
   }
 
   renderFreeAgencyHistory();
+  renderWaiverActivity();
 
   if (!grid) return;
   grid.innerHTML = list.length ? list.map(poke => {
@@ -2887,14 +3034,27 @@ function passWaiverClaim(options = {}) {
   if (faCpuThinking && options.source !== 'cpu') return;
   const passingIdx = currentWaiverTeamIdx();
   const passingTeam = teams[passingIdx];
+  if (!passingTeam) return;
+  const waiverRankBefore = waiverRank(passingIdx);
+  const passNumberInCycle = faCpuPassStreak + 1;
   rotateWaiverOrder(passingIdx);
   faTeamIdx = currentWaiverTeamIdx();
   faDropId = null;
-  faCpuPassStreak++;
+  faCpuPassStreak = passNumberInCycle;
   const nextTeam = teams[faTeamIdx];
+  const cycleComplete = faCpuPassStreak >= teams.length;
+  recordWaiverPass({
+    teamIdx: passingIdx,
+    source: options.source,
+    waiverRankBefore,
+    nextTeamIdx: faTeamIdx,
+    reason: options.reason,
+    passNumberInCycle,
+    cycleComplete,
+  });
   const reason = options.source === 'cpu' && options.reason ? ` (${options.reason})` : '';
-  const cycleDone = faCpuPassStreak >= teams.length ? ' All teams have passed this waiver cycle.' : '';
-  faNotice = `${passingTeam?.name ?? 'Team'} passed${reason}. ${nextTeam ? `${nextTeam.name} is next on claim.` : ''}${cycleDone}`;
+  const cycleDone = cycleComplete ? ' All teams have passed this waiver cycle.' : '';
+  faNotice = `${passingTeam.name} passed${reason}. ${nextTeam ? `${nextTeam.name} is next on claim.` : ''}${cycleDone}`;
   populateFreeAgentControls();
   renderFreeAgentScreen();
   saveSeason(buildSeasonState(SEASON_PHASES.ROSTER_LOCK, 'complete'));
@@ -2932,6 +3092,21 @@ function filterFreeAgencyHistoryTeam(value) {
 function filterFreeAgencyHistoryMove(value) {
   faHistoryMove = value === 'drops' ? 'drops' : 'all';
   renderFreeAgencyHistory();
+}
+
+function filterWaiverActivityDraft(value) {
+  faWaiverDraft = value === 'all' ? 'all' : 'current';
+  renderWaiverActivity();
+}
+
+function filterWaiverActivityTeam(value) {
+  faWaiverTeam = value === 'all' || teams[Number(value)] ? value : 'all';
+  renderWaiverActivity();
+}
+
+function filterWaiverActivitySource(value) {
+  faWaiverSource = value === 'cpu' || value === 'human' ? value : 'all';
+  renderWaiverActivity();
 }
 
 function filterFreeAgents(value) {
@@ -3672,7 +3847,7 @@ function restart() {
   battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
   _savedForResume = null;
   curSort = 'recommended'; curSearch = ''; curType = '';
-  faSort = 'recommended'; faSearch = ''; faType = ''; faTeamIdx = 0; faHistoryDraft = 'current'; faHistoryTeam = 'all'; faHistoryMove = 'all'; faDropId = null; faNotice = ''; faCpuThinking = false; faCpuPassStreak = 0;
+  faSort = 'recommended'; faSearch = ''; faType = ''; faTeamIdx = 0; faHistoryDraft = 'current'; faHistoryTeam = 'all'; faHistoryMove = 'all'; faWaiverDraft = 'current'; faWaiverTeam = 'all'; faWaiverSource = 'all'; faDropId = null; faNotice = ''; faCpuThinking = false; faCpuPassStreak = 0;
   document.getElementById('typeFilter').innerHTML = '<option value="">All Types</option>';
   document.getElementById('progressFill').style.width = '0%';
   document.getElementById('completeScreen').style.display = 'none';
