@@ -106,7 +106,7 @@ const MAX_TEAMS = 12;
 const DRAFT_ROUNDS = 6;
 const ACTIVE_ROSTER_SIZE = 6;
 const MAX_ROSTER_SIZE = ACTIVE_ROSTER_SIZE + 2;
-const SAVE_VERSION = 6;
+const SAVE_VERSION = 7;
 
 // ── State ──
 let allPokemon = [];
@@ -221,34 +221,58 @@ function normalizeSavedTeamList(teamList = [], fallbackList = []) {
   });
 }
 
-function normalizeFreeAgencyTransactions(transactions) {
+function normalizeHistoryTimestamp(timestamp) {
+  if (typeof timestamp !== 'string') return new Date(0).toISOString();
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : new Date(0).toISOString();
+}
+
+function normalizeHistoryId(id, fallback, usedIds) {
+  let normalized = typeof id === 'string' && id.trim() ? id.trim() : fallback;
+  if (usedIds.has(normalized)) {
+    let suffix = 2;
+    while (usedIds.has(`${normalized}-${suffix}`)) suffix++;
+    normalized = `${normalized}-${suffix}`;
+  }
+  usedIds.add(normalized);
+  return normalized;
+}
+
+function normalizeFreeAgencyTransactions(transactions, teamList = teams) {
   if (!Array.isArray(transactions)) return [];
+  const usedIds = new Set();
 
   return transactions.flatMap((transaction, idx) => {
     if (!transaction || transaction.action !== 'claim') return [];
-    if (!Number.isInteger(transaction.teamIdx) || !Number.isInteger(transaction.pokemonId)) return [];
+    if (!Number.isInteger(transaction.teamIdx) || !teamList[transaction.teamIdx]) return [];
+    if (!Number.isInteger(transaction.pokemonId) || transaction.pokemonId <= 0) return [];
 
+    const team = teamList[transaction.teamIdx];
     const source = transaction.source === 'cpu' ? 'cpu' : 'human';
-    const droppedPokemonId = Number.isInteger(transaction.droppedPokemonId)
+    const droppedPokemonId = Number.isInteger(transaction.droppedPokemonId) && transaction.droppedPokemonId > 0
       ? transaction.droppedPokemonId
       : null;
+    const draftId = Number.isInteger(transaction.draftId) && transaction.draftId > 0 ? transaction.draftId : 1;
+    const genIdx = Number.isInteger(transaction.genIdx) && transaction.genIdx >= 0 && transaction.genIdx < GENS.length
+      ? transaction.genIdx
+      : 0;
 
     return [{
-      id: typeof transaction.id === 'string' && transaction.id
-        ? transaction.id
-        : `fa-${transaction.draftId ?? 1}-${transaction.pokemonId}-${idx}`,
-      draftId: Number.isInteger(transaction.draftId) ? transaction.draftId : 1,
-      genIdx: Number.isInteger(transaction.genIdx) ? transaction.genIdx : 0,
-      timestamp: typeof transaction.timestamp === 'string'
-        ? transaction.timestamp
-        : new Date(0).toISOString(),
+      id: normalizeHistoryId(transaction.id, `fa-${draftId}-${transaction.pokemonId}-${idx}`, usedIds),
+      draftId,
+      genIdx,
+      timestamp: normalizeHistoryTimestamp(transaction.timestamp),
       action: 'claim',
       source,
       teamIdx: transaction.teamIdx,
-      teamName: typeof transaction.teamName === 'string' ? transaction.teamName : `Team ${transaction.teamIdx + 1}`,
-      teamColor: typeof transaction.teamColor === 'string' ? transaction.teamColor : '',
+      teamName: typeof transaction.teamName === 'string' && transaction.teamName
+        ? transaction.teamName
+        : team.name ?? `Team ${transaction.teamIdx + 1}`,
+      teamColor: typeof transaction.teamColor === 'string' ? transaction.teamColor : team.color ?? '',
       pokemonId: transaction.pokemonId,
-      pokemonName: typeof transaction.pokemonName === 'string' ? transaction.pokemonName : `Pokemon #${transaction.pokemonId}`,
+      pokemonName: typeof transaction.pokemonName === 'string' && transaction.pokemonName
+        ? transaction.pokemonName
+        : `Pokemon #${transaction.pokemonId}`,
       droppedPokemonId,
       droppedPokemonName: droppedPokemonId !== null && typeof transaction.droppedPokemonName === 'string'
         ? transaction.droppedPokemonName
@@ -266,51 +290,116 @@ function normalizeFreeAgencyTransactions(transactions) {
   });
 }
 
-function normalizeWaiverEvents(events) {
+function normalizeWaiverEvents(events, teamList = teams) {
   if (!Array.isArray(events)) return [];
+  const usedIds = new Set();
 
   return events.flatMap((event, idx) => {
-    if (!event || event.action !== 'pass' || !Number.isInteger(event.teamIdx)) return [];
+    if (!event || event.action !== 'pass' || !Number.isInteger(event.teamIdx) || !teamList[event.teamIdx]) return [];
+    const team = teamList[event.teamIdx];
     const source = event.source === 'cpu' ? 'cpu' : 'human';
+    const draftId = Number.isInteger(event.draftId) && event.draftId > 0 ? event.draftId : 1;
+    const genIdx = Number.isInteger(event.genIdx) && event.genIdx >= 0 && event.genIdx < GENS.length
+      ? event.genIdx
+      : 0;
+    const nextTeamIdx = Number.isInteger(event.nextTeamIdx) && teamList[event.nextTeamIdx]
+      ? event.nextTeamIdx
+      : null;
+
     return [{
-      id: typeof event.id === 'string' && event.id
-        ? event.id
-        : `waiver-pass-${event.draftId ?? 1}-${event.teamIdx}-${idx}`,
-      draftId: Number.isInteger(event.draftId) ? event.draftId : 1,
-      genIdx: Number.isInteger(event.genIdx) ? event.genIdx : 0,
-      timestamp: typeof event.timestamp === 'string'
-        ? event.timestamp
-        : new Date(0).toISOString(),
+      id: normalizeHistoryId(event.id, `waiver-pass-${draftId}-${event.teamIdx}-${idx}`, usedIds),
+      draftId,
+      genIdx,
+      timestamp: normalizeHistoryTimestamp(event.timestamp),
       action: 'pass',
       source,
       teamIdx: event.teamIdx,
-      teamName: typeof event.teamName === 'string' ? event.teamName : `Team ${event.teamIdx + 1}`,
-      teamColor: typeof event.teamColor === 'string' ? event.teamColor : '',
+      teamName: typeof event.teamName === 'string' && event.teamName
+        ? event.teamName
+        : team.name ?? `Team ${event.teamIdx + 1}`,
+      teamColor: typeof event.teamColor === 'string' ? event.teamColor : team.color ?? '',
       waiverRankBefore: Number.isInteger(event.waiverRankBefore) && event.waiverRankBefore > 0
         ? event.waiverRankBefore
         : null,
-      nextTeamIdx: Number.isInteger(event.nextTeamIdx) ? event.nextTeamIdx : null,
-      nextTeamName: typeof event.nextTeamName === 'string' ? event.nextTeamName : null,
+      nextTeamIdx,
+      nextTeamName: typeof event.nextTeamName === 'string' && event.nextTeamName
+        ? event.nextTeamName
+        : nextTeamIdx !== null ? teamList[nextTeamIdx]?.name ?? null : null,
       reason: source === 'cpu' && typeof event.reason === 'string' ? event.reason : null,
       passNumberInCycle: Number.isInteger(event.passNumberInCycle) && event.passNumberInCycle > 0
-        ? event.passNumberInCycle
+        ? Math.min(event.passNumberInCycle, teamList.length)
         : null,
       cycleComplete: Boolean(event.cycleComplete),
     }];
   });
 }
 
+function normalizeFreeAgencyState(state, currentDraftId, teamCount) {
+  const draftId = Number.isInteger(state?.draftId) && state.draftId > 0
+    ? state.draftId
+    : currentDraftId;
+  const status = state?.status === 'open' || state?.status === 'complete'
+    ? state.status
+    : 'notStarted';
+  const passStreak = status === 'open' && Number.isInteger(state?.passStreak)
+    ? Math.max(0, Math.min(state.passStreak, teamCount))
+    : 0;
+  return { draftId, status, passStreak };
+}
+function inferLegacyFreeAgencyState(savedSeason, transactions, events, teamCount) {
+  const draftId = Number.isInteger(savedSeason.currentDraftId) ? savedSeason.currentDraftId : 1;
+  const currentClaims = transactions.filter(transaction => transaction.draftId === draftId);
+  const currentPasses = events.filter(event => event.draftId === draftId);
+  const hasActivity = currentClaims.length > 0 || currentPasses.length > 0;
+  const completedPhase = [
+    SEASON_PHASES.REGULAR_SEASON,
+    SEASON_PHASES.PLAYOFFS,
+    SEASON_PHASES.BETWEEN_DRAFTS,
+    SEASON_PHASES.COMPLETE,
+  ].includes(savedSeason.phase);
+
+  if (completedPhase) return { draftId, status: 'complete', passStreak: 0 };
+  if (savedSeason.phase !== SEASON_PHASES.ROSTER_LOCK || !hasActivity) {
+    return { draftId, status: 'notStarted', passStreak: 0 };
+  }
+
+  const latestClaimTime = currentClaims.reduce((latest, transaction) =>
+    Math.max(latest, Date.parse(transaction.timestamp) || 0), 0);
+  const latestPass = currentPasses.reduce((latest, event) => {
+    const time = Date.parse(event.timestamp) || 0;
+    return !latest || time >= latest.time ? { event, time } : latest;
+  }, null);
+  const passStreak = latestPass && latestPass.time >= latestClaimTime
+    ? latestPass.event.passNumberInCycle ?? (latestPass.event.cycleComplete ? teamCount : 0)
+    : 0;
+
+  return { draftId, status: 'open', passStreak };
+}
+
 function normalizeSavedSeason(saved, normalizedTeams) {
   if (!saved?.season) return saved?.season ?? null;
   const hasSeasonTeams = Array.isArray(saved.season.teams) && saved.season.teams.length > 0;
   const seasonTeams = normalizeSavedTeamList(hasSeasonTeams ? saved.season.teams : normalizedTeams, normalizedTeams);
+  const freeAgencyTransactions = normalizeFreeAgencyTransactions(saved.season.freeAgencyTransactions, seasonTeams);
+  const waiverEvents = normalizeWaiverEvents(saved.season.waiverEvents, seasonTeams);
+  const savedFreeAgencyState = saved.season.freeAgencyState ?? inferLegacyFreeAgencyState(
+    saved.season,
+    freeAgencyTransactions,
+    waiverEvents,
+    seasonTeams.length
+  );
   return {
     ...saved.season,
     version: SAVE_VERSION,
     teams: seasonTeams,
     waiverOrder: normalizeTeamOrder(saved.season.waiverOrder, seasonTeams),
-    freeAgencyTransactions: normalizeFreeAgencyTransactions(saved.season.freeAgencyTransactions),
-    waiverEvents: normalizeWaiverEvents(saved.season.waiverEvents),
+    freeAgencyTransactions,
+    waiverEvents,
+    freeAgencyState: normalizeFreeAgencyState(
+      savedFreeAgencyState,
+      saved.season.currentDraftId ?? 1,
+      seasonTeams.length
+    ),
     settings: {
       ...(saved.season.settings ?? {}),
       numTeams: saved.season.settings?.numTeams ?? seasonTeams.length,
@@ -320,7 +409,6 @@ function normalizeSavedSeason(saved, normalizedTeams) {
     },
   };
 }
-
 function cpuPersonalityLabel(team) {
   if (!team?.isCpu) return '';
   return CPU_PERSONALITIES[cpuPersonalityKey(team)]?.label ?? CPU_PERSONALITIES.balanced.label;
@@ -1064,6 +1152,7 @@ function recordWaiverPass({
 
   const activeSeason = ensureSeason();
   activeSeason.waiverEvents = normalizeWaiverEvents(activeSeason.waiverEvents);
+
   const normalizedSource = source === 'cpu' ? 'cpu' : 'human';
   const nextTeam = Number.isInteger(nextTeamIdx) ? teams[nextTeamIdx] : null;
   const sequence = activeSeason.waiverEvents.length + 1;
@@ -1210,12 +1299,23 @@ function createSeason() {
     waiverOrder: initialWaiverOrder(),
     freeAgencyTransactions: [],
     waiverEvents: [],
+    freeAgencyState: { draftId: draftNumber, status: 'notStarted', passStreak: 0 },
   };
 }
 
 function ensureSeason() {
   if (!season) season = createSeason();
   return season;
+}
+
+function setFreeAgencyState(status, passStreak = faCpuPassStreak) {
+  const activeSeason = ensureSeason();
+  activeSeason.freeAgencyState = normalizeFreeAgencyState({
+    draftId: draftNumber,
+    status,
+    passStreak,
+  }, draftNumber, teams.length);
+  return activeSeason.freeAgencyState;
 }
 
 function syncSeason(phase = SEASON_PHASES.DRAFT, draftStatus = 'inProgress') {
@@ -1244,6 +1344,11 @@ function syncSeason(phase = SEASON_PHASES.DRAFT, draftStatus = 'inProgress') {
   activeSeason.waiverOrder = normalizeTeamOrder(activeSeason.waiverOrder, teams, initialWaiverOrder());
   activeSeason.freeAgencyTransactions = normalizeFreeAgencyTransactions(activeSeason.freeAgencyTransactions);
   activeSeason.waiverEvents = normalizeWaiverEvents(activeSeason.waiverEvents);
+  activeSeason.freeAgencyState = normalizeFreeAgencyState(
+    activeSeason.freeAgencyState,
+    draftNumber,
+    teams.length
+  );
 
   if (draftIdx >= 0) activeSeason.drafts[draftIdx] = draftRecord;
   else activeSeason.drafts.push(draftRecord);
@@ -2666,8 +2771,11 @@ function showFreeAgentScreen() {
 
   getWaiverOrder();
   faTeamIdx = currentWaiverTeamIdx();
-  faCpuPassStreak = 0;
+  const savedFreeAgency = normalizeFreeAgencyState(season?.freeAgencyState, draftNumber, teams.length);
+  const resumingCurrentWindow = savedFreeAgency.draftId === draftNumber && savedFreeAgency.status === 'open';
+  faCpuPassStreak = resumingCurrentWindow ? savedFreeAgency.passStreak : 0;
   faCpuThinking = false;
+  setFreeAgencyState('open', faCpuPassStreak);
   if (!canDropPokemon(teams[faTeamIdx], faDropId)) faDropId = null;
   const gen = GENS[currentGenIdx];
   document.getElementById('freeAgentTitle').textContent = `${gen.label} Free Agents`;
@@ -3017,6 +3125,7 @@ function claimFreeAgent(pokeId, options = {}) {
     reason: options.reason,
   });
   faCpuPassStreak = 0;
+  setFreeAgencyState('open', faCpuPassStreak);
   rotateWaiverOrder(teamIdx);
   faTeamIdx = currentWaiverTeamIdx();
   const nextTeam = teams[faTeamIdx];
@@ -3043,6 +3152,7 @@ function passWaiverClaim(options = {}) {
   faCpuPassStreak = passNumberInCycle;
   const nextTeam = teams[faTeamIdx];
   const cycleComplete = faCpuPassStreak >= teams.length;
+  setFreeAgencyState('open', faCpuPassStreak);
   recordWaiverPass({
     teamIdx: passingIdx,
     source: options.source,
@@ -3141,6 +3251,7 @@ function continueAfterFreeAgents() {
   faNotice = '';
   faCpuThinking = false;
   faCpuPassStreak = 0;
+  setFreeAgencyState('complete', 0);
   saveSeason(buildSeasonState(SEASON_PHASES.ROSTER_LOCK, 'complete'));
   showSeasonScreen();
 }
@@ -3720,6 +3831,7 @@ async function continueToNextGen() {
   draftOrderIndices = [...nextOrder];
   setNextDraftOrder(nextOrder);
   resetWaiverOrderForDraft();
+  setFreeAgencyState('notStarted', 0);
   syncDraftedIdsWithOwnership();
 
   document.getElementById('lobbyScreen').style.display = 'none';
@@ -3971,7 +4083,7 @@ function showResumeScreen(saved) {
     'Draft ' + (saved.draftNumber ?? 1) + ' · ' + gen.label;
   document.getElementById('resumeMetaSub').textContent =
     phase === SEASON_PHASES.ROSTER_LOCK
-      ? 'Active roster lock  ·  ' + saved.numTeams + ' teams'
+      ? (saved.season?.freeAgencyState?.status === 'open' ? 'Free agency  ·  ' : 'Active roster lock  ·  ') + saved.numTeams + ' teams'
     : phase === SEASON_PHASES.REGULAR_SEASON
       ? 'Regular season  ·  ' + saved.numTeams + ' teams'
       : phase === SEASON_PHASES.PLAYOFFS
@@ -4026,6 +4138,14 @@ async function restoreSeason(saved) {
   snakeOrder = normalized.snakeOrder;
   draftOrderIndices = normalized.draftOrderIndices ?? [];
   draftedIds = new Set(normalized.draftedIds);
+  faDropId = null;
+  faNotice = '';
+  faCpuThinking = false;
+  faCpuPassStreak = normalizeFreeAgencyState(
+    season?.freeAgencyState,
+    draftNumber,
+    numTeams
+  ).passStreak;
 
   teams = await Promise.all(normalized.teams.map(async (t) => ({
     ...t,
@@ -4045,7 +4165,9 @@ async function restoreSeason(saved) {
   if (currentRound >= numRounds) {
     const hasMoreGens = currentGenIdx < GENS.length - 1;
     const phase = season?.phase ?? normalized.status;
-    if (phase === SEASON_PHASES.ROSTER_LOCK || phase === SEASON_PHASES.DRAFT) {
+    if (phase === SEASON_PHASES.ROSTER_LOCK && season?.freeAgencyState?.status === 'open') {
+      showFreeAgentScreen();
+    } else if (phase === SEASON_PHASES.ROSTER_LOCK || phase === SEASON_PHASES.DRAFT) {
       showRosterScreen();
     } else if (phase === SEASON_PHASES.REGULAR_SEASON || !isRegularSeasonComplete()) {
       showSeasonScreen();
