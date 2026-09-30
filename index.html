@@ -72,6 +72,7 @@
     </div>
     <button class="btn-primary" onclick="startDraft()">▶ &nbsp;START DRAFT</button>
   </div>
+  <div class="hof" id="hallOfFame"></div>
 </div>
 
 <!-- ══════════════ LOADING ══════════════ -->
@@ -128,6 +129,7 @@
   <div class="dc-modal" id="draftConfirm" role="dialog" aria-modal="true" aria-labelledby="dcTitle"></div>
 </div>
 <div class="draft-toast" id="draftToast" role="status" aria-live="polite"></div>
+<div class="pick-announce" id="pickAnnounce" aria-hidden="true"></div>
 
 <!-- ══════════════ ACTIVE ROSTERS ══════════════ -->
 <div id="rosterScreen">
@@ -136,6 +138,7 @@
     <div class="roster-sub" id="rosterSub">Lock 6 Pokémon for the season</div>
   </div>
 
+  <div class="draft-grades-banner" id="draftGradesBanner"></div>
   <div class="roster-layout" id="rosterLayout"></div>
 
   <div class="roster-actions">
@@ -302,6 +305,7 @@
       <div class="battle-side" id="battleSideB"></div>
     </div>
 
+    <div class="battle-playback-effect" id="battlePlaybackEffect"></div>
     <div class="battle-playback-text" id="battlePlaybackText"></div>
     <div class="battle-playback-score" id="battlePlaybackScore"></div>
 
@@ -340,8 +344,15 @@
 <div id="completeScreen">
   <div class="comp-title">SEASON COMPLETE!</div>
   <div class="comp-sub">Final Rankings by Playoff Finish</div>
+  <div class="comp-champions" id="compChampions"></div>
   <div class="comp-grid" id="compGrid"></div>
   <button class="btn-restart" onclick="restart()">↺ &nbsp;NEW SEASON</button>
+</div>
+
+<!-- ══════════════ CHAMPION CELEBRATION ══════════════ -->
+<div class="champ-overlay" id="champOverlay" onclick="if (event.target === this) closeChampionCelebration()">
+  <div class="champ-confetti" id="champConfetti" aria-hidden="true"></div>
+  <div class="champ-card" id="champCard" role="dialog" aria-modal="true" aria-labelledby="champName"></div>
 </div>
 
 <script src="storage.js"></script>
