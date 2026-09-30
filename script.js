@@ -129,7 +129,36 @@ let selectedDraftId = null;   // card picked but not yet confirmed
 let lastHumanPick = null;     // { teamIdx, pokeId } — enables a one-step undo
 let undoToastTimer = null;
 let cpuPickTimer = null;
-const UNDO_WINDOW_MS = 5000;
+// CPU pacing: [base ms, random extra ms] per action, plus how long Undo stays open.
+const CPU_SPEEDS = {
+  normal:  { label: 'Normal',  draft: [800, 800], freeAgency: [650, 650], undo: 5000 },
+  fast:    { label: 'Fast',    draft: [250, 200], freeAgency: [200, 200], undo: 3500 },
+  instant: { label: 'Instant', draft: [0, 0],     freeAgency: [0, 0],     undo: 3000 },
+};
+let cpuSpeed = CPU_SPEEDS[loadPrefs().cpuSpeed] ? loadPrefs().cpuSpeed : 'normal';
+
+function cpuDelay(kind) {
+  const [base, jitter] = CPU_SPEEDS[cpuSpeed][kind];
+  return base + Math.random() * jitter;
+}
+
+function undoWindowMs() {
+  return CPU_SPEEDS[cpuSpeed].undo;
+}
+
+function setCpuSpeed(value) {
+  if (!CPU_SPEEDS[value]) return;
+  cpuSpeed = value;
+  savePrefs({ cpuSpeed });
+  syncCpuSpeedControls();
+}
+
+function syncCpuSpeedControls() {
+  ['cpuSpeedSelect', 'setupCpuSpeed'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = cpuSpeed;
+  });
+}
 const PICK_TOAST_MS = 2200;
 const ANNOUNCE_MS = 2400;
 const ANNOUNCE_TOP_RANK = 10;   // board ranks that get the full "with pick #N…" treatment
@@ -214,6 +243,9 @@ function normalizeSavedTeamList(teamList = [], fallbackList = []) {
       picks,
       activeIds: Array.isArray(team?.activeIds)
         ? [...new Set(team.activeIds.filter(id => Number.isInteger(id) && pickIds.has(id)))]
+        : [],
+      wishlist: Array.isArray(team?.wishlist)
+        ? [...new Set(team.wishlist.filter(id => Number.isInteger(id)))]
         : [],
     };
 
@@ -775,7 +807,8 @@ function activePokemonByMetric(team, metric) {
 }
 
 function pokemonDisplayName(poke) {
-  return poke?.name ? poke.name.replace(/-/g, ' ') : 'a key pick';
+  if (!poke?.name) return 'a key pick';
+  return poke.name.replace(/-/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
 }
 
 function teamBattleStyle(score, isTeamA) {
@@ -1243,6 +1276,7 @@ function serializeTeam(team) {
     cpuPersonality: team.isCpu ? cpuPersonalityKey(team) : null,
     picks: teamPickIds(team),
     activeIds: getActiveRosterIds(team),
+    wishlist: (team.wishlist ?? []).filter(id => Number.isInteger(id)),
   };
 }
 
@@ -1813,6 +1847,60 @@ function renderNameInputs() {
   }
 }
 
+// Fill the setup form from the last league the player started.
+function applySetupPrefs() {
+  const setup = loadPrefs().setup ?? {};
+  const count = Number.isInteger(setup.numTeams) ? clamp(setup.numTeams, 2, MAX_TEAMS) : 4;
+  document.getElementById('numTeamsRange').value = count;
+  document.getElementById('teamNamesGrid').innerHTML = '';
+  updateTeamCount(count);
+  document.querySelectorAll('.team-name-field').forEach((field, i) => {
+    if (typeof setup.names?.[i] === 'string' && setup.names[i].trim()) field.value = setup.names[i];
+  });
+  document.querySelectorAll('.cpu-toggle').forEach((btn, i) => {
+    const isCpu = Boolean(setup.cpu?.[i]);
+    btn.dataset.cpu = String(isCpu);
+    btn.classList.toggle('active', isCpu);
+  });
+  if (Number.isInteger(setup.genIdx) && GENS[setup.genIdx]) {
+    document.getElementById('genSelect').value = String(setup.genIdx);
+  }
+  syncCpuSpeedControls();
+  const note = document.getElementById('setupRemembered');
+  if (note) {
+    note.innerHTML = loadPrefs().setup
+      ? 'Your last league setup is filled in. <button type="button" onclick="resetSetupForm()">Reset to defaults</button>'
+      : '';
+  }
+}
+
+function resetSetupForm() {
+  savePrefs({ setup: null });
+  applySetupPrefs();
+}
+
+function rememberSetup() {
+  savePrefs({
+    setup: {
+      numTeams,
+      names: [...document.querySelectorAll('.team-name-field')].map(field => field.value.trim()),
+      cpu: [...document.querySelectorAll('.cpu-toggle')].map(btn => btn.dataset.cpu === 'true'),
+      genIdx: parseInt(document.getElementById('genSelect').value),
+    },
+  });
+}
+
+// One click: four teams, you're the first, the other three are CPUs.
+function quickStart() {
+  document.getElementById('numTeamsRange').value = 4;
+  updateTeamCount(4);
+  document.querySelectorAll('.cpu-toggle').forEach((btn, i) => {
+    btn.dataset.cpu = String(i > 0);
+    btn.classList.toggle('active', i > 0);
+  });
+  startDraft();
+}
+
 async function startDraft() {
   currentGenIdx = parseInt(document.getElementById('genSelect').value);
   draftNumber = 1;
@@ -1826,6 +1914,7 @@ async function startDraft() {
   numTeams = Math.min(MAX_TEAMS, parseInt(document.getElementById('numTeamsRange').value));
   numRounds = DRAFT_ROUNDS;
   updateRounds();
+  rememberSetup();
 
   const nameFields = document.querySelectorAll('.team-name-field');
   const cpuToggles = document.querySelectorAll('.cpu-toggle');
@@ -1836,6 +1925,7 @@ async function startDraft() {
     cpuPersonality: null,
     picks: [],
     activeIds: [],
+    wishlist: [],
   }));
   normalizeCpuPersonalities(teams);
   syncDraftedIdsWithOwnership();
@@ -1844,7 +1934,7 @@ async function startDraft() {
   draftOrderIndices = shuffleArray(Array.from({ length: numTeams }, (_, i) => i));
 
   document.getElementById('setupScreen').style.display = 'none';
-  await loadGen(currentGenIdx);
+  if (!await loadGen(currentGenIdx)) return;
 
   buildSnakeOrder();
   season = createSeason();
@@ -1864,6 +1954,8 @@ async function startDraft() {
 }
 
 // ── Data Loading ──
+// Resolves true once the generation is loaded, or false if the player gives
+// up after a failure and goes back to setup (the saved season is kept).
 async function loadGen(genIdx) {
   const gen = GENS[genIdx];
   setPhaseTracker(null);
@@ -1873,7 +1965,61 @@ async function loadGen(genIdx) {
   document.getElementById('loadCount').textContent = '0 / 0';
   document.getElementById('loadName').textContent = '';
 
-  await loadPokemonData(gen.start, gen.end);
+  for (;;) {
+    showLoadError(null);
+    try {
+      await loadPokemonData(gen.start, gen.end);
+      return true;
+    } catch (err) {
+      const retry = await waitForLoadDecision(err);
+      if (!retry) return false;
+    }
+  }
+}
+
+function showLoadError(message) {
+  const el = document.getElementById('loadError');
+  if (!el) return;
+  el.classList.toggle('visible', Boolean(message));
+  if (!message) el.innerHTML = '';
+}
+
+function waitForLoadDecision(err) {
+  return new Promise(resolve => {
+    const el = document.getElementById('loadError');
+    el.innerHTML = `
+      <div class="le-title">Couldn't load the Pokédex</div>
+      <div class="le-sub">${err?.message ?? 'PokéAPI did not respond.'} Check your connection and try again — Pokémon already loaded are cached, so a retry is quick.</div>
+      <div class="le-actions">
+        <button type="button" class="le-back">Back to setup</button>
+        <button type="button" class="le-retry">↻ Retry</button>
+      </div>
+    `;
+    el.classList.add('visible');
+    el.querySelector('.le-retry').onclick = () => resolve(true);
+    el.querySelector('.le-back').onclick = () => {
+      showLoadError(null);
+      document.getElementById('loadingScreen').style.display = 'none';
+      restart();
+      resolve(false);
+    };
+    el.querySelector('.le-retry').focus();
+  });
+}
+
+async function fetchPokemonWithRetry(id, attempts = 3) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return parsePokemon(await res.json());
+    } catch (err) {
+      lastError = err;
+      await new Promise(r => setTimeout(r, 400 * 2 ** attempt));
+    }
+  }
+  throw lastError;
 }
 
 async function loadPokemonData(start, end) {
@@ -1894,13 +2040,19 @@ async function loadPokemonData(start, end) {
   document.getElementById('loadCount').textContent = `0 / ${count}`;
   const BATCH = 60;
 
+  let failed = 0;
   for (let i = 0; i < allIds.length; i += BATCH) {
     const batchIds = allIds.slice(i, i + BATCH);
     const results = await Promise.all(batchIds.map(async (id) => {
       if (cachedMap.has(id)) { loaded++; return cachedMap.get(id); }
 
-      const data = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`).then(r => r.json());
-      const parsed = parsePokemon(data);
+      let parsed;
+      try {
+        parsed = await fetchPokemonWithRetry(id);
+      } catch (err) {
+        failed++;
+        return null;
+      }
       await putCachedPokemon(parsed);
 
       loaded++;
@@ -1910,7 +2062,11 @@ async function loadPokemonData(start, end) {
       document.getElementById('loadName').textContent = parsed.name;
       return parsed;
     }));
-    allPokemon.push(...results);
+    allPokemon.push(...results.filter(Boolean));
+  }
+  if (failed) {
+    allPokemon = [];
+    throw new Error(`${failed} of ${count} Pokémon failed to download.`);
   }
 }
 
@@ -2202,6 +2358,30 @@ function renderDraftAssistant() {
         </div>
       `).join('')}
     </div>
+    ${renderWishlistBlock()}
+  `;
+}
+
+function renderWishlistBlock() {
+  const ownerIdx = wishlistOwnerIdx();
+  if (ownerIdx === null) return '';
+  const owner = teams[ownerIdx];
+  const list = availableWishlist(owner);
+  return `
+    <div class="da-wishlist">
+      <div class="da-wishlist-head">
+        <span>★ ${possessive(owner.name)} wish list</span>
+        <b>${list.length}</b>
+      </div>
+      ${list.length ? list.map((poke, idx) => `
+        <div class="da-wish-row">
+          <span class="da-wish-num">${idx + 1}</span>
+          <strong>${pokemonDisplayName(poke)}</strong>
+          <button type="button" title="Move up" aria-label="Move ${poke.name} up" onclick="moveWishlistItem(${poke.id}, -1)"${idx === 0 ? ' disabled' : ''}>↑</button>
+          <button type="button" title="Remove" aria-label="Remove ${poke.name}" onclick="toggleWishlist(${poke.id}, event)">×</button>
+        </div>
+      `).join('') : '<div class="da-wish-empty">Tap ☆ on a card to plan picks. "Pick for me" takes the top one.</div>'}
+    </div>
   `;
 }
 
@@ -2394,7 +2574,7 @@ function triggerCpuFreeAgencyIfNeeded() {
   faNotice = `${team.name} is evaluating waivers...`;
   populateFreeAgentControls();
   renderFreeAgentScreen();
-  setTimeout(cpuFreeAgentPick, 650 + Math.random() * 650);
+  setTimeout(cpuFreeAgentPick, cpuDelay('freeAgency'));
 }
 
 function cpuFreeAgentPick() {
@@ -2458,6 +2638,7 @@ function setCpuThinking(on) {
     picker.classList.remove('thinking');
   }
   renderDraftAssistant();
+  refreshPickForMeButton();
 }
 
 function triggerCpuIfNeeded() {
@@ -2467,7 +2648,7 @@ function triggerCpuIfNeeded() {
   setCpuThinking(true);
   clearTimeout(cpuPickTimer);
   // Right after a human pick, hold the CPU until the undo window closes.
-  const delay = canUndoDraftPick() ? UNDO_WINDOW_MS : 800 + Math.random() * 800;
+  const delay = canUndoDraftPick() ? undoWindowMs() : cpuDelay('draft');
   cpuPickTimer = setTimeout(cpuPick, delay);
 }
 
@@ -2589,6 +2770,7 @@ function setPhaseTracker(stepKey) {
       `<span class="pt-label">${step.label}</span></li>`;
   }).join('');
 
+  syncCpuSpeedControls();
   tracker.classList.add('visible');
   document.body.classList.add('has-phase-tracker');
 }
@@ -2607,6 +2789,7 @@ function populateTypeFilter() {
 }
 
 function refreshHeader() {
+  refreshPickForMeButton();
   if (cpuThinking) return;
   const total = numRounds * numTeams;
   const pick = currentPickNum();
@@ -2702,7 +2885,9 @@ function refreshGrid() {
     card.className = 'poke-card' + (isDrafted ? ' drafted' : '') + (rec?.score >= 82 ? ' recommended-pick' : '') +
       (poke.id === selectedDraftId ? ' selected' : '');
     card.dataset.id = poke.id;
+    const starred = !isDrafted && isWishlisted(poke.id);
     card.innerHTML = `
+      ${!isDrafted && wishlistOwnerIdx() !== null ? `<button type="button" class="pc-star${starred ? ' on' : ''}" aria-pressed="${starred}" aria-label="Wish list ${poke.name}" title="Add to wish list" onclick="toggleWishlist(${poke.id}, event)">${starred ? '★' : '☆'}</button>` : ''}
       ${rec ? `<div class="pc-fit" title="${recommendationTitle(rec)}"><span>Fit</span><strong>${rec.score}</strong></div>` : ''}
       <img src="${poke.sprite}" alt="${poke.name}" onerror="this.style.visibility='hidden'">
       <div class="pc-num">#${String(poke.id).padStart(3, '0')}</div>
@@ -2718,6 +2903,7 @@ function refreshGrid() {
       card.setAttribute('aria-label', `Select ${poke.name}, base stat total ${poke.bst}`);
       card.addEventListener('click', () => selectDraftCandidate(poke.id));
       card.addEventListener('keydown', (e) => {
+        if (e.target !== card) return;
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           selectDraftCandidate(poke.id);
@@ -2797,7 +2983,7 @@ function renderDraftConfirm() {
 }
 
 // ── Undo toast ──
-// After a human pick, a toast offers Undo for UNDO_WINDOW_MS. If a CPU is up
+// After a human pick, a toast offers Undo for undoWindowMs(). If a CPU is up
 // next it waits out the window, so the pick can still be taken back.
 function canUndoDraftPick() {
   if (!lastHumanPick || currentRound >= numRounds) return false;
@@ -2817,7 +3003,97 @@ function clearUndoToast() {
   }
 }
 
-// Human picks get an Undo button for UNDO_WINDOW_MS; CPU picks get a short notice.
+// ── Wish list & "Pick for me" ──
+// Stars go on the list of the human team that picks next (the one on the
+// clock, or the next human in snake order while a CPU is picking).
+function wishlistOwnerIdx() {
+  const start = Math.min(currentPickNum(), snakeOrder.length - 1);
+  for (let i = Math.max(0, start); i < snakeOrder.length; i++) {
+    if (!teams[snakeOrder[i]]?.isCpu) return snakeOrder[i];
+  }
+  const firstHuman = teams.findIndex(team => !team.isCpu);
+  return firstHuman >= 0 ? firstHuman : null;
+}
+
+function availableWishlist(team) {
+  const owned = ownedPokemonIds();
+  return (team?.wishlist ?? [])
+    .filter(id => !owned.has(id))
+    .map(id => allPokemon.find(p => p.id === id))
+    .filter(Boolean);
+}
+
+function isWishlisted(pokeId) {
+  const idx = wishlistOwnerIdx();
+  return idx !== null && (teams[idx].wishlist ?? []).includes(pokeId);
+}
+
+function toggleWishlist(pokeId, event) {
+  event?.stopPropagation();
+  const idx = wishlistOwnerIdx();
+  if (idx === null) return;
+  const team = teams[idx];
+  team.wishlist ??= [];
+  team.wishlist = team.wishlist.includes(pokeId)
+    ? team.wishlist.filter(id => id !== pokeId)
+    : [...team.wishlist, pokeId];
+  document.querySelectorAll(`.poke-card[data-id="${pokeId}"] .pc-star`).forEach(btn => {
+    const on = team.wishlist.includes(pokeId);
+    btn.classList.toggle('on', on);
+    btn.textContent = on ? '★' : '☆';
+    btn.setAttribute('aria-pressed', String(on));
+  });
+  renderDraftAssistant();
+  refreshPickForMeButton();
+  saveSeason(buildSeasonState(SEASON_PHASES.DRAFT, 'inProgress'));
+}
+
+function moveWishlistItem(pokeId, delta) {
+  const team = teams[wishlistOwnerIdx()];
+  if (!team?.wishlist) return;
+  const list = [...team.wishlist];
+  const from = list.indexOf(pokeId);
+  const to = from + delta;
+  if (from < 0 || to < 0 || to >= list.length) return;
+  [list[from], list[to]] = [list[to], list[from]];
+  team.wishlist = list;
+  renderDraftAssistant();
+  refreshPickForMeButton();
+  saveSeason(buildSeasonState(SEASON_PHASES.DRAFT, 'inProgress'));
+}
+
+function pickForMeChoice(team) {
+  return availableWishlist(team)[0] ?? getTopRecommendations(team, 1)[0]?.poke ?? null;
+}
+
+function pickForMe() {
+  const team = teams[currentTeamIdx()];
+  if (!team || team.isCpu || cpuThinking || currentRound >= numRounds) return;
+  const choice = pickForMeChoice(team);
+  if (!choice) return;
+  selectedDraftId = null;
+  renderDraftConfirm();
+  draftPokemon(choice);
+}
+
+function refreshPickForMeButton() {
+  const btn = document.getElementById('btnPickForMe');
+  if (!btn) return;
+  const team = teams[currentTeamIdx()];
+  const onClock = team && !team.isCpu && !cpuThinking && currentRound < numRounds;
+  btn.disabled = !onClock;
+  if (!onClock) {
+    btn.textContent = '⚡ Pick for me';
+    btn.title = 'Available when a human team is on the clock';
+    return;
+  }
+  const fromList = availableWishlist(team)[0];
+  const choice = pickForMeChoice(team);
+  btn.textContent = fromList ? '⚡ Pick for me · wish list' : '⚡ Pick for me';
+  btn.title = choice ? `Drafts ${pokemonDisplayName(choice)} ${fromList ? '(top of your wish list)' : '(best fit)'}` : '';
+}
+
+// Human picks get an Undo button for undoWindowMs(); CPU picks get a short notice.
 function showPickToast(teamIdx, pokeId) {
   const toast = document.getElementById('draftToast');
   const team = teams[teamIdx];
@@ -2828,7 +3104,7 @@ function showPickToast(teamIdx, pokeId) {
   }
   const undoable = !team.isCpu && canUndoDraftPick();
   if (!undoable) lastHumanPick = null;
-  const duration = undoable ? UNDO_WINDOW_MS : PICK_TOAST_MS;
+  const duration = undoable ? undoWindowMs() : cpuSpeed === 'normal' ? PICK_TOAST_MS : 1400;
   toast.innerHTML = `
     <span class="dt-dot" style="background:${team.color}"></span>
     <span class="dt-text"><strong>${team.name}</strong> drafted <strong class="dc-poke-name">${poke.name}</strong></span>
@@ -3101,14 +3377,21 @@ function renderDraftGradesBanner(grades) {
 }
 
 // ── Active Rosters ──
+// The first time a draft's roster screen opens, every team starts from its
+// strongest six (so new picks aren't silently benched). After that, choices
+// made by human teams are kept, e.g. when coming back from free agency.
 function prepareActiveRosterLocks() {
+  const activeSeason = ensureSeason();
+  activeSeason.lineupsSeeded ??= [];
+  const firstVisit = !activeSeason.lineupsSeeded.includes(draftNumber);
   teams.forEach(team => {
     const validActive = (team.activeIds ?? []).filter(id => team.picks.some(p => p.id === id));
     team.activeIds = validActive.slice(0, ACTIVE_ROSTER_SIZE);
-    if (team.isCpu || team.activeIds.length === 0) {
+    if (firstVisit || team.isCpu || team.activeIds.length === 0) {
       autoSetActiveRoster(team);
     }
   });
+  if (firstVisit) activeSeason.lineupsSeeded.push(draftNumber);
 }
 
 function allActiveRostersLocked() {
@@ -3153,6 +3436,7 @@ function renderRosterScreen() {
             <span>${p.name}</span>
             <strong>${p.bst}</strong>
             ${pickTagHtml(pickTagFor(p.id), 'mini')}
+            ${draftNumber > 1 && getGen(p.id).num === GENS[currentGenIdx].num ? `<span class="new-tag">New · ${GENS[currentGenIdx].short}</span>` : ''}
           </button>
         `;
       }).join('');
@@ -3172,8 +3456,9 @@ function renderRosterScreen() {
   }).join('');
 
   const locked = allActiveRostersLocked();
+  const newPickNote = draftNumber > 1 ? ' · lineups start as each team\'s strongest 6 — tap to swap' : '';
   document.getElementById('rosterSub').textContent = locked
-    ? 'All active rosters locked'
+    ? `All active rosters locked${newPickNote}`
     : `Choose exactly ${ACTIVE_ROSTER_SIZE} active Pokémon for each team`;
   document.getElementById('btnRosterContinue').disabled = !locked;
 }
@@ -4098,15 +4383,25 @@ function renderSeasonScreen() {
   document.getElementById('seasonSub').textContent =
     `${simulated} of ${schedule.length} games complete${complete ? ' · season complete' : ` · week ${nextWeek} up next`}`;
 
-  document.getElementById('seasonStandings').innerHTML = standings.map(entry => `
+  document.getElementById('seasonStandings').innerHTML = `
+    <div class="season-standing-row season-standing-head" aria-hidden="true">
+      <div class="season-rank">#</div>
+      <div></div>
+      <div class="season-team-name">Team</div>
+      <div class="season-record" title="Wins-losses">W-L</div>
+      <div class="season-stat" title="Skirmishes won across all games">Sets won</div>
+      <div class="season-stat" title="Skirmishes won minus skirmishes lost">Set diff</div>
+      <div class="season-rating" title="Team rating: active roster BST, type variety, speed and bulk">Rating</div>
+    </div>
+  ` + standings.map(entry => `
     <div class="season-standing-row">
       <div class="season-rank">${entry.seed}</div>
       <div class="season-team-dot" style="background:${entry.color}"></div>
       <div class="season-team-name">${entry.name} ${cpuBadgeHtml(entry, 'season-cpu-personality', { compact: true })}</div>
       <div class="season-record">${entry.wins}-${entry.losses}</div>
-      <div class="season-stat">PF ${entry.pointsFor}</div>
-      <div class="season-stat">PD ${entry.pointDiff > 0 ? '+' : ''}${entry.pointDiff}</div>
-      <div class="season-rating">${entry.rating}</div>
+      <div class="season-stat" title="Sets won">${entry.pointsFor}</div>
+      <div class="season-stat" title="Set difference">${entry.pointDiff > 0 ? '+' : ''}${entry.pointDiff}</div>
+      <div class="season-rating" title="Team rating">${entry.rating}</div>
     </div>
   `).join('');
 
@@ -4169,6 +4464,11 @@ function simulateAllSeason() {
   syncRegularSeasonResults();
   renderSeasonScreen();
   saveSeason(buildSeasonState(SEASON_PHASES.REGULAR_SEASON, 'complete'));
+}
+
+function simToPlayoffs() {
+  if (!isRegularSeasonComplete()) simulateAllSeason();
+  continueAfterRegularSeason();
 }
 
 function continueAfterRegularSeason() {
@@ -4479,11 +4779,22 @@ function showLobby() {
       : `Draft ${draftNumber} · Playoffs complete`;
 
   const standings = buildRegularSeasonStandings(getCurrentDraftSchedule());
-  const ranked = standings.map(entry => ({
+  // Medals follow the playoff finish (champion first), not the regular season.
+  const playoffOrder = isPlayoffsComplete() ? [...computePlayoffDraftOrder()].reverse() : [];
+  const byFinish = playoffOrder.length === standings.length
+    ? playoffOrder.map(idx => standings.find(entry => entry.teamIdx === idx))
+    : standings;
+  const ranked = byFinish.map(entry => ({
     ...entry,
     team: teams[entry.teamIdx],
     idx: entry.teamIdx,
   }));
+  const standingsLabel = document.getElementById('lobbyStandingsLabel');
+  if (standingsLabel) {
+    standingsLabel.textContent = playoffOrder.length === standings.length
+      ? 'Final Standings · playoff finish'
+      : 'Standings';
+  }
 
   const nextOrder = season?.nextDraftOrder?.length
     ? season.nextDraftOrder.map(idx => ranked.find(entry => entry.idx === idx)).filter(Boolean)
@@ -4548,13 +4859,14 @@ async function continueToNextGen() {
   battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
 
   draftOrderIndices = [...nextOrder];
+  teams.forEach(team => { team.wishlist = []; });
   setNextDraftOrder(nextOrder);
   resetWaiverOrderForDraft();
   setFreeAgencyState('notStarted', 0);
   syncDraftedIdsWithOwnership();
 
   document.getElementById('lobbyScreen').style.display = 'none';
-  await loadGen(currentGenIdx);
+  if (!await loadGen(currentGenIdx)) return;
 
   buildSnakeOrder();
   document.getElementById('typeFilter').innerHTML = '<option value="">All Types</option>';
@@ -4697,7 +5009,7 @@ function restart() {
   closeChampionCelebration();
   hidePickAnnouncement();
   updateRounds();
-  renderNameInputs();
+  applySetupPrefs();
   renderHallOfFame();
 }
 
@@ -4799,9 +5111,8 @@ async function init() {
     return;
   }
 
-  updateTeamCount(4);
+  applySetupPrefs();
   updateRounds();
-  renderNameInputs();
   renderHallOfFame();
   document.getElementById('setupScreen').style.display = 'flex';
 }
@@ -4859,7 +5170,7 @@ function discardAndNew() {
   _savedForResume = null;
   document.getElementById('resumeScreen').style.display = 'none';
   document.getElementById('setupScreen').style.display = 'flex';
-  updateTeamCount(4);
+  applySetupPrefs();
   updateRounds();
   renderHallOfFame();
 }
@@ -4894,7 +5205,7 @@ async function restoreSeason(saved) {
   normalizeCpuPersonalities(teams);
   syncDraftedIdsWithOwnership();
 
-  await loadGen(currentGenIdx);
+  if (!await loadGen(currentGenIdx)) return;
   buildSnakeOrder();
   document.getElementById('typeFilter').innerHTML = '<option value="">All Types</option>';
   populateTypeFilter();

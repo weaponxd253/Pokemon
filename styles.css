@@ -2471,6 +2471,110 @@ body.has-phase-tracker #completeScreen { min-height: calc(100vh - var(--tracker-
   .battle-hp b { transition: none; }
 }
 
+/* ═══════════ EASE OF USE ═══════════ */
+/* Quick start + remembered setup */
+.btn-quick-start {
+  width: 100%; margin-top: 10px; padding: 14px;
+  background: transparent; color: var(--yellow);
+  border: 2px solid var(--yellow); border-radius: 10px; cursor: pointer;
+  font-family: 'Press Start 2P', monospace; font-size: 10px; letter-spacing: 0.5px;
+  transition: background 0.15s, transform 0.15s;
+}
+.btn-quick-start:hover { background: rgba(255,215,0,0.1); transform: translateY(-1px); }
+.setup-remembered { margin-top: 10px; font-size: 13px; color: var(--muted); text-align: center; }
+.setup-remembered:empty { display: none; }
+.setup-remembered button {
+  background: none; border: none; padding: 0; margin-left: 4px; cursor: pointer;
+  color: var(--yellow); font: inherit; font-weight: 700; text-decoration: underline;
+}
+
+/* CPU speed in the phase tracker */
+.pt-speed {
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: auto;
+  font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap;
+}
+.pt-speed select {
+  width: auto; padding: 3px 8px; font-size: 13px; border-radius: 6px;
+}
+.phase-tracker { justify-content: flex-start; }
+.pt-gen { margin-left: auto; }
+
+/* Pick for me */
+.btn-pick-for-me {
+  flex-shrink: 0; padding: 0 14px; min-height: 36px; border-radius: 6px; cursor: pointer;
+  background: var(--yellow); color: #000; border: none;
+  font-family: 'Rajdhani', sans-serif; font-size: 14px; font-weight: 700; white-space: nowrap;
+}
+.btn-pick-for-me:hover:not(:disabled) { filter: brightness(1.08); }
+.btn-pick-for-me:disabled { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); cursor: not-allowed; }
+
+/* Wish-list star on cards */
+.pc-star {
+  position: absolute; top: 5px; left: 6px; z-index: 1;
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; cursor: pointer;
+  font-size: 18px; line-height: 1; color: var(--muted);
+  transition: transform 0.12s, color 0.12s;
+}
+.pc-star:hover { color: var(--yellow); transform: scale(1.15); }
+.pc-star.on { color: var(--yellow); text-shadow: 0 0 10px rgba(255,215,0,0.6); }
+.pc-star:focus-visible { outline: 2px solid var(--yellow); }
+
+/* Wish list in the draft assistant */
+.da-wishlist {
+  margin-top: 10px; padding: 8px 10px; border-radius: 8px;
+  background: rgba(255,215,0,0.05); border: 1px solid rgba(255,215,0,0.3);
+}
+.da-wishlist-head {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;
+  font-size: 12px; font-weight: 700; color: var(--yellow); text-transform: uppercase; letter-spacing: 0.5px;
+}
+.da-wish-row {
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) 24px 24px;
+  align-items: center; gap: 5px; font-size: 13px; padding: 2px 0;
+}
+.da-wish-num { font-family: 'Press Start 2P', monospace; font-size: 7px; color: var(--yellow); }
+.da-wish-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.da-wish-row button {
+  width: 24px; height: 24px; border-radius: 4px; cursor: pointer;
+  background: var(--surface2); color: var(--text); border: 1px solid var(--border); font-size: 13px; line-height: 1;
+}
+.da-wish-row button:disabled { opacity: 0.35; cursor: default; }
+.da-wish-empty { font-size: 12px; color: var(--muted); line-height: 1.35; }
+
+/* New-generation picks on the roster screen */
+.new-tag {
+  position: absolute; top: 4px; left: 4px;
+  padding: 1px 4px; border-radius: 3px; background: var(--yellow); color: #000;
+  font-family: 'Press Start 2P', monospace; font-size: 5px; text-transform: uppercase;
+}
+
+/* Standings header row */
+.season-standing-head {
+  background: transparent; border-color: transparent; padding-top: 0; padding-bottom: 2px;
+}
+.season-standing-head > div {
+  font-family: 'Rajdhani', sans-serif !important; font-size: 11px !important; font-weight: 700;
+  color: var(--muted) !important; text-transform: uppercase; letter-spacing: 1px;
+}
+
+/* Loading failure */
+.load-error {
+  display: none; max-width: 440px; margin-top: 18px; padding: 16px 18px; text-align: center;
+  background: var(--surface); border: 1px solid rgba(255,45,45,0.6); border-radius: 12px;
+}
+.load-error.visible { display: block; }
+.le-title { font-family: 'Press Start 2P', monospace; font-size: 10px; color: #ff6b6b; }
+.le-sub { margin-top: 8px; font-size: 14px; color: var(--muted); line-height: 1.4; }
+.le-actions { margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.le-actions button {
+  min-height: 42px; border-radius: 8px; cursor: pointer;
+  font-family: 'Rajdhani', sans-serif; font-size: 15px; font-weight: 700;
+}
+.le-retry { background: var(--yellow); color: #000; border: none; }
+.le-back { background: transparent; color: var(--text); border: 1px solid var(--border); }
+
 /* ═══════════════════════════════════════
    MOBILE RESPONSIVE  (≤ 640px)
    ═══════════════════════════════════════ */
@@ -2496,6 +2600,12 @@ body.has-phase-tracker #completeScreen { min-height: calc(100vh - var(--tracker-
   .dc-modal { width: 100%; border-radius: 14px 14px 0 0; padding: 16px 16px 20px; }
   .dc-head img { width: 64px; height: 64px; }
   .draft-toast { font-size: 14px; bottom: 12px; }
+
+  /* ── Ease-of-use controls on phones ── */
+  .pt-speed span { display: none; }
+  .pt-speed select { font-size: 12px; padding: 2px 4px; }
+  .pt-gen { margin-left: 0; }
+  .btn-pick-for-me { flex-basis: 100%; min-height: 40px; }
 
   /* ── Fun layer on phones ── */
   .pa-card { padding: 18px 16px; }
@@ -2685,5 +2795,7 @@ body.has-phase-tracker #completeScreen { min-height: calc(100vh - var(--tracker-
   .cpu-toggle { padding: 8px 10px; min-width: 44px; min-height: 36px; }
 }
 
-/* ── Tab bar hidden on desktop ── */
-.mobile-tabs { display: none; }
+/* ── Tab bar hidden on desktop (scoped, so it can't override the phone rule above) ── */
+@media (min-width: 641px) {
+  .mobile-tabs { display: none; }
+}
