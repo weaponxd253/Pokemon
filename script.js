@@ -127,6 +127,9 @@ let faDropId = null, faNotice = '', faCpuThinking = false, faCpuPassStreak = 0;
 let cpuThinking = false;
 let selectedDraftId = null;   // card picked but not yet confirmed
 let lastHumanPick = null;     // { teamIdx, pokeId } — enables a one-step undo
+let undoToastTimer = null;
+let cpuPickTimer = null;
+const UNDO_WINDOW_MS = 5000;
 let faContinueArmed = false;  // second click on "Continue" skips open waiver turns
 let season = null;
 let selectedBattleLogs = { season: null, playoff: null };
@@ -1810,7 +1813,7 @@ async function startDraft() {
   currentPickInRound = 0;
   draftedIds = new Set();
   season = null;
-  selectedDraftId = null; lastHumanPick = null; faContinueArmed = false;
+  selectedDraftId = null; clearUndoToast(); clearTimeout(cpuPickTimer); cpuPickTimer = null; faContinueArmed = false;
   selectedBattleLogs = { season: null, playoff: null };
   faSort = 'recommended'; faSearch = ''; faType = ''; faTeamIdx = 0; faHistoryDraft = 'current'; faHistoryTeam = 'all'; faHistoryMove = 'all'; faWaiverDraft = 'current'; faWaiverTeam = 'all'; faWaiverSource = 'all'; faDropId = null; faNotice = ''; faCpuThinking = false; faCpuPassStreak = 0;
   numTeams = Math.min(MAX_TEAMS, parseInt(document.getElementById('numTeamsRange').value));
@@ -2418,6 +2421,7 @@ function cpuFreeAgentPick() {
 }
 
 function cpuPick() {
+  cpuPickTimer = null;
   const team = teams[currentTeamIdx()];
   const available = availablePokemon();
   if (!team || !available.length) return;
@@ -2454,7 +2458,10 @@ function triggerCpuIfNeeded() {
   const ti = currentTeamIdx();
   if (!teams[ti].isCpu) return;
   setCpuThinking(true);
-  setTimeout(cpuPick, 800 + Math.random() * 800);
+  clearTimeout(cpuPickTimer);
+  // Right after a human pick, hold the CPU until the undo window closes.
+  const delay = canUndoDraftPick() ? UNDO_WINDOW_MS : 800 + Math.random() * 800;
+  cpuPickTimer = setTimeout(cpuPick, delay);
 }
 
 // ── Phase Tracker ──
@@ -2633,13 +2640,9 @@ function refreshGrid() {
   renderDraftConfirm();
 }
 
-// First click selects a card; clicking it again (or the Draft button) confirms.
+// Clicking a card opens a confirm modal; the pick only happens on "Draft".
 function selectDraftCandidate(pokeId) {
   if (cpuThinking || teams[currentTeamIdx()]?.isCpu) return;
-  if (selectedDraftId === pokeId) {
-    confirmDraftPick();
-    return;
-  }
   selectedDraftId = pokeId;
   document.querySelectorAll('.poke-card.selected').forEach(card => card.classList.remove('selected'));
   document.querySelector(`.poke-card[data-id="${pokeId}"]`)?.classList.add('selected');
@@ -2657,58 +2660,21 @@ function confirmDraftPick() {
   if (cpuThinking) return;
   const poke = allPokemon.find(p => p.id === selectedDraftId);
   selectedDraftId = null;
+  renderDraftConfirm();
   if (poke) draftPokemon(poke);
-  else renderDraftConfirm();
-}
-
-function canUndoDraftPick() {
-  if (!lastHumanPick || cpuThinking || currentRound >= numRounds) return false;
-  const pickNum = currentPickNum();
-  if (pickNum === 0 || snakeOrder[pickNum - 1] !== lastHumanPick.teamIdx) return false;
-  // A CPU on the clock has already scheduled its pick, so only undo between human turns.
-  return !teams[currentTeamIdx()]?.isCpu;
-}
-
-function undoLastDraftPick() {
-  if (!canUndoDraftPick()) return;
-  const { teamIdx, pokeId } = lastHumanPick;
-  const team = teams[teamIdx];
-  team.picks = team.picks.filter(p => p.id !== pokeId);
-  team.activeIds = (team.activeIds ?? []).filter(id => id !== pokeId);
-  lastHumanPick = null;
-
-  if (currentPickInRound === 0) {
-    currentRound--;
-    currentPickInRound = numTeams - 1;
-  } else {
-    currentPickInRound--;
-  }
-  syncDraftedIdsWithOwnership();
-  selectedDraftId = pokeId;
-
-  refreshHeader();
-  refreshSnakeBar();
-  refreshGrid();
-  refreshTeams();
-  saveSeason(buildSeasonState(SEASON_PHASES.DRAFT, 'inProgress'));
 }
 
 function renderDraftConfirm() {
-  const bar = document.getElementById('draftConfirm');
-  if (!bar) return;
+  const overlay = document.getElementById('draftConfirmOverlay');
+  const modal = document.getElementById('draftConfirm');
+  if (!overlay || !modal) return;
   const poke = selectedDraftId !== null ? allPokemon.find(p => p.id === selectedDraftId) : null;
   const team = teams[currentTeamIdx()];
-  const undo = canUndoDraftPick()
-    ? (() => {
-        const undoTeam = teams[lastHumanPick.teamIdx];
-        const undoPoke = undoTeam?.picks.find(p => p.id === lastHumanPick.pokeId);
-        return `<button class="dc-undo" onclick="undoLastDraftPick()">↶ Undo ${undoTeam ? possessive(undoTeam.name) : 'last'} pick${undoPoke ? ` (<span class="dc-poke-name">${undoPoke.name}</span>)` : ''}</button>`;
-      })()
-    : '';
+  const wasOpen = overlay.classList.contains('visible');
 
   if (!poke || !team || team.isCpu) {
-    bar.innerHTML = undo ? `<div class="dc-row dc-row-undo">${undo}</div>` : '';
-    bar.classList.toggle('visible', Boolean(undo));
+    overlay.classList.remove('visible');
+    modal.innerHTML = '';
     return;
   }
 
@@ -2721,22 +2687,98 @@ function renderDraftConfirm() {
     return `<div class="dc-stat"><span>${label}</span><i><b style="width:${Math.min(100, value / 1.6)}%"></b></i><strong>${value}</strong></div>`;
   }).join('');
 
-  bar.innerHTML = `
-    <div class="dc-row">
+  modal.innerHTML = `
+    <div class="dc-kicker"><span class="dc-team-dot" style="background:${team.color}"></span>${possessive(team.name)} pick · Round ${currentRound + 1}</div>
+    <div class="dc-head">
       <img src="${poke.sprite}" alt="" onerror="this.style.visibility='hidden'">
       <div class="dc-info">
-        <div class="dc-name">${poke.name} <span>#${String(poke.id).padStart(3, '0')} · BST ${poke.bst}</span></div>
+        <div class="dc-name" id="dcTitle">${poke.name}</div>
+        <div class="dc-meta">#${String(poke.id).padStart(3, '0')} · BST ${poke.bst} · Fit ${rec.score}</div>
         <div class="dc-types">${typePills(poke.types)} <em>${rec.reason}</em></div>
       </div>
-      <div class="dc-stats">${stats}</div>
-      <div class="dc-actions">
-        ${undo}
-        <button class="dc-cancel" onclick="clearDraftSelection()">Cancel</button>
-        <button class="dc-confirm" style="--team:${team.color}" onclick="confirmDraftPick()">Draft <span class="dc-poke-name">${poke.name}</span> for ${team.name}</button>
-      </div>
+    </div>
+    <div class="dc-stats">${stats}</div>
+    <div class="dc-actions">
+      <button class="dc-cancel" onclick="clearDraftSelection()">Cancel</button>
+      <button class="dc-confirm" id="dcConfirmBtn" style="--team:${team.color}" onclick="confirmDraftPick()">Draft <span class="dc-poke-name">${poke.name}</span></button>
     </div>
   `;
-  bar.classList.add('visible');
+  overlay.classList.add('visible');
+  if (!wasOpen) document.getElementById('dcConfirmBtn')?.focus();
+}
+
+// ── Undo toast ──
+// After a human pick, a toast offers Undo for UNDO_WINDOW_MS. If a CPU is up
+// next it waits out the window, so the pick can still be taken back.
+function canUndoDraftPick() {
+  if (!lastHumanPick || currentRound >= numRounds) return false;
+  const pickNum = currentPickNum();
+  if (pickNum === 0 || snakeOrder[pickNum - 1] !== lastHumanPick.teamIdx) return false;
+  return teamPickIds(teams[lastHumanPick.teamIdx]).includes(lastHumanPick.pokeId);
+}
+
+function clearUndoToast() {
+  clearTimeout(undoToastTimer);
+  undoToastTimer = null;
+  lastHumanPick = null;
+  const toast = document.getElementById('draftToast');
+  if (toast) {
+    toast.classList.remove('visible');
+    toast.innerHTML = '';
+  }
+}
+
+function showUndoToast() {
+  const toast = document.getElementById('draftToast');
+  if (!toast || !canUndoDraftPick()) {
+    clearUndoToast();
+    return;
+  }
+  const team = teams[lastHumanPick.teamIdx];
+  const poke = team.picks.find(p => p.id === lastHumanPick.pokeId);
+  toast.innerHTML = `
+    <span class="dt-dot" style="background:${team.color}"></span>
+    <span class="dt-text"><strong>${team.name}</strong> drafted <strong class="dc-poke-name">${poke?.name ?? 'a Pokémon'}</strong></span>
+    <button class="dt-undo" onclick="undoLastDraftPick()">↶ Undo</button>
+    <span class="dt-timer" style="animation-duration:${UNDO_WINDOW_MS}ms"></span>
+  `;
+  // Restart the countdown animation.
+  toast.classList.remove('visible');
+  void toast.offsetWidth;
+  toast.classList.add('visible');
+  clearTimeout(undoToastTimer);
+  undoToastTimer = setTimeout(clearUndoToast, UNDO_WINDOW_MS);
+}
+
+function undoLastDraftPick() {
+  if (!canUndoDraftPick()) {
+    clearUndoToast();
+    return;
+  }
+  const { teamIdx, pokeId } = lastHumanPick;
+  // Cancel the CPU pick that was waiting for the undo window to close.
+  clearTimeout(cpuPickTimer);
+  cpuPickTimer = null;
+  if (cpuThinking) setCpuThinking(false);
+
+  const team = teams[teamIdx];
+  team.picks = team.picks.filter(p => p.id !== pokeId);
+  team.activeIds = (team.activeIds ?? []).filter(id => id !== pokeId);
+  clearUndoToast();
+
+  if (currentPickInRound === 0) {
+    currentRound--;
+    currentPickInRound = numTeams - 1;
+  } else {
+    currentPickInRound--;
+  }
+  syncDraftedIdsWithOwnership();
+
+  refreshHeader();
+  refreshSnakeBar();
+  refreshGrid();
+  refreshTeams();
+  saveSeason(buildSeasonState(SEASON_PHASES.DRAFT, 'inProgress'));
 }
 
 function refreshTeams() {
@@ -2790,7 +2832,8 @@ function draftPokemon(poke) {
   }
   team.picks.push(poke);
   selectedDraftId = null;
-  lastHumanPick = team.isCpu ? null : { teamIdx: ti, pokeId: poke.id };
+  clearUndoToast();
+  if (!team.isCpu) lastHumanPick = { teamIdx: ti, pokeId: poke.id };
   if ((team.activeIds ?? []).length < ACTIVE_ROSTER_SIZE) {
     team.activeIds ??= [];
     team.activeIds.push(poke.id);
@@ -2817,6 +2860,7 @@ function draftPokemon(poke) {
   refreshTeams();
   flashRosterTab();
   saveSeason(buildSeasonState(SEASON_PHASES.DRAFT, 'inProgress'));
+  showUndoToast();
   triggerCpuIfNeeded();
 }
 
@@ -2868,7 +2912,7 @@ function showRosterScreen() {
 
   prepareActiveRosterLocks();
   selectedDraftId = null;
-  lastHumanPick = null;
+  clearUndoToast();
   setPhaseTracker('rosters');
   const gen = GENS[currentGenIdx];
   document.getElementById('rosterTitle').textContent = `${gen.label} Active Rosters`;
@@ -4085,7 +4129,7 @@ async function continueToNextGen() {
   currentPickInRound = 0;
   cpuThinking = false;
   selectedDraftId = null;
-  lastHumanPick = null;
+  clearUndoToast();
   selectedBattleLogs = { season: null, playoff: null };
   faDropId = null;
   faNotice = '';
@@ -4224,7 +4268,7 @@ function restart() {
   clearBattlePlaybackTimer();
   battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
   _savedForResume = null;
-  selectedDraftId = null; lastHumanPick = null; faContinueArmed = false;
+  selectedDraftId = null; clearUndoToast(); clearTimeout(cpuPickTimer); cpuPickTimer = null; faContinueArmed = false;
   setPhaseTracker(null);
   curSort = 'recommended'; curSearch = ''; curType = '';
   faSort = 'recommended'; faSearch = ''; faType = ''; faTeamIdx = 0; faHistoryDraft = 'current'; faHistoryTeam = 'all'; faHistoryMove = 'all'; faWaiverDraft = 'current'; faWaiverTeam = 'all'; faWaiverSource = 'all'; faDropId = null; faNotice = ''; faCpuThinking = false; faCpuPassStreak = 0;
@@ -4415,7 +4459,7 @@ async function restoreSeason(saved) {
   faNotice = '';
   faCpuThinking = false;
   selectedDraftId = null;
-  lastHumanPick = null;
+  clearUndoToast();
   faCpuPassStreak = normalizeFreeAgencyState(
     season?.freeAgencyState,
     draftNumber,

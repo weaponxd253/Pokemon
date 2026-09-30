@@ -2163,49 +2163,83 @@ body.has-phase-tracker #completeScreen { min-height: calc(100vh - var(--tracker-
 }
 .poke-card:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
 
-.draft-confirm {
-  display: none; flex-shrink: 0;
-  padding: 10px 14px; background: var(--surface2);
-  border-top: 1px solid rgba(255,215,0,0.45);
+.dc-overlay {
+  display: none; position: fixed; inset: 0; z-index: 200;
+  align-items: center; justify-content: center; padding: 16px;
+  background: rgba(3,3,12,0.72); backdrop-filter: blur(2px);
 }
-.draft-confirm.visible { display: block; }
+.dc-overlay.visible { display: flex; }
 
-.dc-row {
-  display: grid; align-items: center; gap: 14px;
-  grid-template-columns: 56px minmax(140px, 1fr) minmax(220px, 1.4fr) auto;
+.dc-modal {
+  width: min(440px, 100%); max-height: calc(100vh - 32px); overflow-y: auto;
+  padding: 18px; border-radius: 12px;
+  background: var(--surface); border: 1px solid rgba(255,215,0,0.45);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  animation: dc-pop 0.14s ease-out;
 }
-.dc-row.dc-row-undo { display: flex; justify-content: flex-end; }
-.dc-row img { width: 56px; height: 56px; image-rendering: pixelated; }
+@keyframes dc-pop { from { transform: scale(0.96); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.dc-kicker {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 1px;
+}
+.dc-team-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+.dc-head { display: flex; align-items: center; gap: 14px; margin: 12px 0 14px; }
+.dc-head img { width: 80px; height: 80px; flex-shrink: 0; image-rendering: pixelated; }
 .dc-info { min-width: 0; }
 .dc-name {
-  font-size: 17px; font-weight: 700; text-transform: capitalize;
+  font-size: 22px; font-weight: 700; text-transform: capitalize;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.dc-name span { font-size: 13px; color: var(--muted); text-transform: none; }
-.dc-types { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
+.dc-meta { font-size: 13px; color: var(--muted); }
+.dc-types { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 5px; }
 .dc-types em { font-style: normal; font-size: 12px; font-weight: 700; color: var(--yellow); text-transform: uppercase; margin-left: 4px; }
 
-.dc-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 12px; }
-.dc-stat { display: grid; grid-template-columns: 30px 1fr 28px; align-items: center; gap: 6px; font-size: 12px; }
+.dc-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
+.dc-stat { display: grid; grid-template-columns: 30px 1fr 28px; align-items: center; gap: 6px; font-size: 13px; }
 .dc-stat span { color: var(--muted); font-weight: 700; }
-.dc-stat i { height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.dc-stat i { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
 .dc-stat b { display: block; height: 100%; background: var(--yellow); }
 .dc-stat strong { text-align: right; }
 
-.dc-actions { display: flex; gap: 8px; align-items: center; }
-.dc-actions button, .dc-undo {
-  min-height: 38px; padding: 0 14px; border-radius: 6px; cursor: pointer;
+.dc-actions { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; margin-top: 18px; }
+.dc-actions button {
+  min-height: 44px; padding: 0 14px; border-radius: 8px; cursor: pointer;
+  font-family: 'Rajdhani', sans-serif; font-size: 15px; font-weight: 700;
+}
+.dc-cancel { background: transparent; color: var(--text); border: 1px solid var(--border); }
+.dc-cancel:hover { border-color: var(--muted); }
+.dc-confirm { background: var(--yellow); color: #000; border: 2px solid var(--team, var(--yellow)); }
+.dc-confirm:hover { filter: brightness(1.08); }
+.dc-confirm:focus-visible, .dc-cancel:focus-visible, .dt-undo:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.dc-poke-name { text-transform: capitalize; }
+
+/* Undo toast */
+.draft-toast {
+  display: none; position: fixed; z-index: 150;
+  bottom: 20px; left: 50%; transform: translateX(-50%);
+  width: max-content; max-width: calc(100vw - 24px);
+  align-items: center; gap: 10px; padding: 10px 12px 12px 14px;
+  background: var(--surface2); border: 1px solid rgba(255,215,0,0.45); border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5); overflow: hidden;
+  font-size: 15px;
+}
+.draft-toast.visible { display: flex; animation: dc-pop 0.14s ease-out; }
+.dt-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.dt-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-undo {
+  flex-shrink: 0; min-height: 34px; padding: 0 14px; border-radius: 6px; cursor: pointer;
+  background: var(--yellow); color: #000; border: none;
   font-family: 'Rajdhani', sans-serif; font-size: 14px; font-weight: 700;
 }
-.dc-cancel, .dc-undo {
-  background: transparent; color: var(--text); border: 1px solid var(--border);
+.dt-timer {
+  position: absolute; left: 0; bottom: 0; height: 3px; width: 100%;
+  background: var(--yellow); transform-origin: left;
+  animation: dt-countdown linear forwards;
 }
-.dc-cancel:hover, .dc-undo:hover { border-color: var(--muted); }
-.dc-confirm {
-  background: var(--yellow); color: #000; border: 2px solid var(--team, var(--yellow));
-}
-.dc-poke-name { text-transform: capitalize; }
-.dc-confirm:hover { filter: brightness(1.08); }
+@keyframes dt-countdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 
 /* ═══════════ FREE AGENCY: WHOSE TURN ═══════════ */
 .fa-clock-banner {
@@ -2260,12 +2294,11 @@ body.has-phase-tracker #completeScreen { min-height: calc(100vh - var(--tracker-
   .pt-step.current .pt-label { display: inline; }
   .pt-step + .pt-step::before { width: 8px; }
 
-  /* ── Draft confirm bar ── */
-  .dc-row { grid-template-columns: 44px minmax(0, 1fr); gap: 8px; }
-  .dc-row img { width: 44px; height: 44px; }
-  .dc-stats { grid-column: 1 / -1; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .dc-actions { grid-column: 1 / -1; flex-wrap: wrap; }
-  .dc-actions button { flex: 1; min-height: 42px; }
+  /* ── Draft confirm modal: bottom sheet on phones ── */
+  .dc-overlay { align-items: flex-end; padding: 0; }
+  .dc-modal { width: 100%; border-radius: 14px 14px 0 0; padding: 16px 16px 20px; }
+  .dc-head img { width: 64px; height: 64px; }
+  .draft-toast { font-size: 14px; bottom: 12px; }
 
   /* ── Setup ── */
   .setup-card { padding: 24px 18px; }
