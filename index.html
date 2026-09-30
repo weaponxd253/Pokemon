@@ -113,7 +113,6 @@
         </select>
       </div>
       <div class="poke-grid" id="pokeGrid"></div>
-      <div class="draft-confirm" id="draftConfirm" aria-live="polite"></div>
     </div>
 
     <div class="teams-panel">
@@ -123,6 +122,12 @@
     </div>
   </div>
 </div>
+
+<!-- Draft confirm modal + undo toast (fixed, so visible at any scroll position) -->
+<div class="dc-overlay" id="draftConfirmOverlay" onclick="if (event.target === this) clearDraftSelection()">
+  <div class="dc-modal" id="draftConfirm" role="dialog" aria-modal="true" aria-labelledby="dcTitle"></div>
+</div>
+<div class="draft-toast" id="draftToast" role="status" aria-live="polite"></div>
 
 <!-- ══════════════ ACTIVE ROSTERS ══════════════ -->
 <div id="rosterScreen">
