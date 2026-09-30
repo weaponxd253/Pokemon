@@ -79,3 +79,24 @@ async function getCachedRange(start, end) {
     req.onerror = () => resolve([]);
   });
 }
+
+// ── localStorage: Hall of Fame (survives across seasons) ──────────────────
+
+const HALL_OF_FAME_KEY = 'pokedraft_hall_of_fame';
+
+function loadHallOfFame() {
+  try {
+    const list = JSON.parse(localStorage.getItem(HALL_OF_FAME_KEY) ?? '[]');
+    return Array.isArray(list) ? list : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveHallOfFame(list) {
+  try {
+    localStorage.setItem(HALL_OF_FAME_KEY, JSON.stringify(list));
+  } catch (e) {
+    console.warn('Hall of Fame save failed:', e);
+  }
+}
