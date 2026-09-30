@@ -105,7 +105,8 @@ const GENS = [
 const MAX_TEAMS = 12;
 const DRAFT_ROUNDS = 6;
 const ACTIVE_ROSTER_SIZE = 6;
-const MAX_ROSTER_SIZE = ACTIVE_ROSTER_SIZE + 2;
+const FREE_AGENT_SLOTS = 2;
+const MAX_ROSTER_SIZE = ACTIVE_ROSTER_SIZE + FREE_AGENT_SLOTS;
 const SAVE_VERSION = 7;
 
 // ── State ──
@@ -489,8 +490,10 @@ function isActiveRosterLocked(team) {
   return (team.activeIds ?? []).length === Math.min(ACTIVE_ROSTER_SIZE, team.picks.length);
 }
 
-function rosterLimit() {
-  return season?.settings?.maxRosterSize ?? MAX_ROSTER_SIZE;
+// Rosters carry over between generations, so the limit grows by one draft's
+// worth of picks per generation, plus the free-agent bench slots.
+function rosterLimit(draftId = draftNumber) {
+  return numRounds * Math.max(1, draftId) + FREE_AGENT_SLOTS;
 }
 
 function rosterCount(team) {
@@ -1282,7 +1285,7 @@ function createSeason() {
       numTeams,
       numRounds,
       activeRosterSize: ACTIVE_ROSTER_SIZE,
-      maxRosterSize: MAX_ROSTER_SIZE,
+      maxRosterSize: rosterLimit(),
       maxGenIdx: GENS.length - 1,
     },
     currentDraftId: draftNumber,
@@ -1332,7 +1335,7 @@ function syncSeason(phase = SEASON_PHASES.DRAFT, draftStatus = 'inProgress') {
   activeSeason.settings.numTeams = numTeams;
   activeSeason.settings.numRounds = numRounds;
   activeSeason.settings.activeRosterSize = ACTIVE_ROSTER_SIZE;
-  activeSeason.settings.maxRosterSize ??= MAX_ROSTER_SIZE;
+  activeSeason.settings.maxRosterSize = rosterLimit();
   activeSeason.settings.maxGenIdx ??= GENS.length - 1;
   activeSeason.teams = teams.map(serializeTeam);
   activeSeason.standings = buildSeasonStandings();
@@ -2295,11 +2298,18 @@ function cpuFreeAgentUpgradeThreshold(team) {
   }[cpuPersonalityKey(team)] ?? 7;
 }
 
+// Score a Pokémon against the roster without `excludeId`, so an owned Pokémon
+// isn't penalized for "duplicating" its own types.
+function cpuDraftScoreWithout(poke, team, excludeId) {
+  const rest = { ...team, picks: (team?.picks ?? []).filter(p => p.id !== excludeId) };
+  return cpuDraftScore(poke, rest);
+}
+
 function cpuBenchDropCandidate(team) {
   const bench = (team?.picks ?? []).filter(p => canDropPokemon(team, p.id));
   if (!bench.length) return null;
   return bench
-    .map(poke => ({ poke, ...cpuDraftScore(poke, team) }))
+    .map(poke => ({ poke, ...cpuDraftScoreWithout(poke, team, poke.id) }))
     .sort((a, b) => a.score - b.score || pokemonPower(a.poke) - pokemonPower(b.poke))[0];
 }
 
@@ -2319,7 +2329,10 @@ function cpuFreeAgentDecision(team) {
   const upgradeThreshold = cpuFreeAgentUpgradeThreshold(team);
   const scored = available
     .map(poke => {
-      const score = cpuDraftScore(poke, team);
+      // Compare against the roster as it would look after the swap.
+      const score = replacement
+        ? cpuDraftScoreWithout(poke, team, replacement.poke.id)
+        : cpuDraftScore(poke, team);
       const gain = replacement ? score.score - replacement.score : score.score - openThreshold;
       return {
         poke,
