@@ -9,6 +9,12 @@
 </head>
 <body>
 
+<!-- ══════════════ PHASE TRACKER ══════════════ -->
+<nav class="phase-tracker" id="phaseTracker" aria-label="Season progress">
+  <div class="pt-gen" id="phaseTrackerGen"></div>
+  <ol class="pt-steps" id="phaseTrackerSteps"></ol>
+</nav>
+
 <!-- ══════════════ RESUME ══════════════ -->
 <div id="resumeScreen">
   <div class="resume-logo">POKÉMON<br>DRAFT LEAGUE</div>
@@ -107,6 +113,7 @@
         </select>
       </div>
       <div class="poke-grid" id="pokeGrid"></div>
+      <div class="draft-confirm" id="draftConfirm" aria-live="polite"></div>
     </div>
 
     <div class="teams-panel">
@@ -139,6 +146,8 @@
     <div class="free-agent-sub" id="freeAgentSub">Undrafted Pokémon available to sign</div>
   </div>
 
+  <div class="fa-clock-banner" id="faClockBanner" role="status" aria-live="polite"></div>
+
   <div class="free-agent-toolbar">
     <input class="fa-search" id="faSearch" type="text" placeholder="Search free agents…" oninput="filterFreeAgents(this.value)">
     <select class="fa-select" id="faTypeFilter" onchange="filterFreeAgentType(this.value)">
@@ -151,13 +160,13 @@
       <option value="name">Name A-Z</option>
       <option value="number">Number</option>
     </select>
-    <select class="fa-select" id="faTeamSelect" onchange="selectFreeAgentTeam(this.value)"></select>
+    <select class="fa-select" id="faTeamSelect" aria-label="View team" title="View another team's roster" onchange="selectFreeAgentTeam(this.value)"></select>
   </div>
 
   <div class="free-agent-layout">
     <div class="free-agent-grid" id="freeAgentGrid"></div>
     <div class="free-agent-side">
-      <div class="free-agent-side-title">Target Team</div>
+      <div class="free-agent-side-title">Viewing Team</div>
       <div class="free-agent-team" id="freeAgentTeam"></div>
       <div class="free-agent-roster" id="freeAgentRoster"></div>
     </div>
@@ -212,7 +221,7 @@
 
   <div class="free-agent-actions">
     <button class="btn-fa-secondary" onclick="showRosterScreen()">Back to Rosters</button>
-    <button class="btn-fa-primary" onclick="continueAfterFreeAgents()">Continue to Season</button>
+    <button class="btn-fa-primary" id="btnFaContinue" onclick="continueAfterFreeAgents()">Continue to Season</button>
   </div>
 </div>
 

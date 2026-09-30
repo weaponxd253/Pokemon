@@ -6,7 +6,7 @@
   --red: #ff2d2d;
   --yellow: #ffd700;
   --text: #e0e0f4;
-  --muted: #5c5c90;
+  --muted: #8a8abf;   /* ≥5.4:1 on every surface (WCAG AA) */
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -54,8 +54,8 @@ body::before {
 }
 
 .resume-tagline {
-  color: var(--muted); font-size: 12px;
-  letter-spacing: 4px; text-transform: uppercase;
+  color: var(--muted); font-size: 13px;
+  letter-spacing: 2px; text-transform: uppercase;
   text-align: center; margin-bottom: 36px;
 }
 
@@ -173,8 +173,8 @@ body::before {
 }
 
 .tagline {
-  color: var(--muted); font-size: 12px;
-  letter-spacing: 4px; text-transform: uppercase;
+  color: var(--muted); font-size: 13px;
+  letter-spacing: 2px; text-transform: uppercase;
   text-align: center; margin-bottom: 44px;
 }
 
@@ -346,8 +346,8 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 }
 
 .dh-sub {
-  font-size: 11px; color: var(--muted);
-  margin-top: 5px; letter-spacing: 2px; text-transform: uppercase;
+  font-size: 12px; color: var(--muted);
+  margin-top: 5px; letter-spacing: 1.5px; text-transform: uppercase;
 }
 
 .dh-right { font-size: 13px; color: var(--muted); text-align: right; white-space: nowrap; }
@@ -449,7 +449,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 }
 
 .pc-fit span {
-  font-size: 8px; font-weight: 700;
+  font-size: 9px; font-weight: 700;
   color: var(--muted); text-transform: uppercase;
 }
 
@@ -458,7 +458,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   font-size: 8px; color: var(--yellow);
 }
 
-.pc-num { font-size: 10px; color: var(--muted); }
+.pc-num { font-size: 11px; color: var(--muted); }
 
 .pc-name {
   font-weight: 700; font-size: 13px;
@@ -472,7 +472,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   padding: 2px 6px; border-radius: 10px; text-transform: uppercase;
 }
 
-.pc-bst-lbl { font-size: 10px; color: var(--muted); }
+.pc-bst-lbl { font-size: 11px; color: var(--muted); }
 .pc-bst { font-family: 'Press Start 2P', monospace; font-size: 10px; color: var(--yellow); }
 
 .pc-rec-reason {
@@ -569,7 +569,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 .da-best-main { min-width: 0; }
 
 .da-best-label {
-  font-size: 9px; color: var(--muted);
+  font-size: 10px; color: var(--muted);
   letter-spacing: 1px; text-transform: uppercase;
 }
 
@@ -611,7 +611,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 .da-need-block span,
 .da-targets > span {
   display: block;
-  font-size: 9px; color: var(--muted);
+  font-size: 10px; color: var(--muted);
   letter-spacing: 1px; text-transform: uppercase;
   margin-bottom: 3px;
 }
@@ -782,7 +782,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 
 .roster-sub {
   color: var(--muted); font-size: 12px;
-  letter-spacing: 3px; text-transform: uppercase;
+  letter-spacing: 2px; text-transform: uppercase;
 }
 
 .roster-layout {
@@ -903,7 +903,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 
 .free-agent-sub {
   color: var(--muted); font-size: 12px;
-  letter-spacing: 3px; text-transform: uppercase;
+  letter-spacing: 2px; text-transform: uppercase;
 }
 
 .free-agent-toolbar {
@@ -921,8 +921,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 }
 
 .fa-search:disabled,
-.fa-select:disabled,
-.fa-pass-btn:disabled {
+.fa-select:disabled {
   opacity: 0.55; cursor: wait;
 }
 
@@ -965,7 +964,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 }
 
 .fa-num {
-  font-family: 'Press Start 2P', monospace; font-size: 7px; color: var(--muted);
+  font-family: 'Press Start 2P', monospace; font-size: 8px; color: var(--muted);
 }
 
 .fa-name {
@@ -1022,18 +1021,6 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   display: flex; align-items: center; justify-content: space-between;
   gap: 8px; margin-bottom: 8px;
   color: var(--text); font-size: 13px; font-weight: 700;
-}
-
-.fa-pass-btn {
-  min-height: 28px; padding: 0 10px;
-  background: transparent; color: var(--yellow);
-  border: 1px solid rgba(255,215,0,0.45); border-radius: 5px;
-  font-family: 'Rajdhani', sans-serif; font-size: 12px; font-weight: 700;
-  cursor: pointer;
-}
-
-.fa-pass-btn:hover {
-  background: rgba(255,215,0,0.1);
 }
 
 .fa-waiver-pills {
@@ -1211,7 +1198,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 
 .fa-history-source {
   padding: 2px 5px; border-radius: 4px; border: 1px solid var(--border);
-  color: var(--muted); font-size: 9px; font-weight: 700; text-transform: uppercase;
+  color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase;
 }
 
 .fa-history-source.cpu { color: var(--yellow); border-color: rgba(255,215,0,0.35); }
@@ -1319,7 +1306,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 
 .season-sub {
   color: var(--muted); font-size: 12px;
-  letter-spacing: 3px; text-transform: uppercase;
+  letter-spacing: 2px; text-transform: uppercase;
 }
 
 .season-layout {
@@ -1510,7 +1497,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 
 .battle-set-matchup strong {
   font-family: 'Press Start 2P', monospace;
-  font-size: 7px; color: var(--muted); text-align: center;
+  font-size: 8px; color: var(--muted); text-align: center;
   text-transform: uppercase;
 }
 
@@ -1773,7 +1760,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 
 .playoff-sub {
   color: var(--muted); font-size: 12px;
-  letter-spacing: 3px; text-transform: uppercase;
+  letter-spacing: 2px; text-transform: uppercase;
 }
 
 .playoff-layout {
@@ -1816,7 +1803,7 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 }
 
 .playoff-game-label {
-  font-size: 10px; font-weight: 700; color: var(--muted);
+  font-size: 11px; font-weight: 700; color: var(--muted);
   letter-spacing: 2px; text-transform: uppercase; margin-bottom: 8px;
 }
 
@@ -1936,8 +1923,8 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 
 .comp-sub {
   text-align: center; color: var(--muted);
-  letter-spacing: 4px; text-transform: uppercase;
-  font-size: 12px; margin-bottom: 44px;
+  letter-spacing: 2px; text-transform: uppercase;
+  font-size: 13px; margin-bottom: 44px;
 }
 
 .comp-grid {
@@ -2013,8 +2000,8 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 }
 
 .lobby-draft-label {
-  color: var(--muted); font-size: 12px;
-  letter-spacing: 4px; text-transform: uppercase;
+  color: var(--muted); font-size: 13px;
+  letter-spacing: 2px; text-transform: uppercase;
 }
 
 .lobby-section { max-width: 1400px; width: 100%; margin: 0 auto 32px; }
@@ -2115,6 +2102,144 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 .mini-chip.active-roster { outline: 1px solid rgba(255,215,0,0.35); }
 .mini-chip.bench-roster { opacity: 0.45; }
 
+/* ═══════════ PHASE TRACKER ═══════════ */
+:root { --tracker-h: 44px; }
+
+.phase-tracker {
+  display: none;
+  position: sticky; top: 0; z-index: 50;
+  height: var(--tracker-h); padding: 0 20px; gap: 18px;
+  align-items: center; justify-content: center;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.phase-tracker.visible { display: flex; }
+
+body.has-phase-tracker #draftScreen { height: calc(100vh - var(--tracker-h)); }
+@supports (height: 100dvh) {
+  body.has-phase-tracker #draftScreen { height: calc(100dvh - var(--tracker-h)); }
+}
+body.has-phase-tracker #rosterScreen,
+body.has-phase-tracker #freeAgentScreen,
+body.has-phase-tracker #seasonScreen,
+body.has-phase-tracker #playoffScreen,
+body.has-phase-tracker #lobbyScreen,
+body.has-phase-tracker #completeScreen { min-height: calc(100vh - var(--tracker-h)); }
+
+.pt-gen {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  font-size: 13px; font-weight: 700; color: var(--text); white-space: nowrap;
+}
+.pt-gen-badge {
+  font-family: 'Press Start 2P', monospace; font-size: 8px; color: #000;
+  padding: 4px 6px; border-radius: 4px;
+}
+
+.pt-steps {
+  list-style: none; display: flex; align-items: center; gap: 6px;
+  min-width: 0; overflow-x: auto;
+}
+.pt-step {
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  font-size: 13px; font-weight: 700; color: var(--muted); white-space: nowrap;
+}
+.pt-step + .pt-step::before {
+  content: ''; width: 18px; height: 1px; background: var(--border);
+}
+.pt-dot {
+  width: 20px; height: 20px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; border: 1px solid var(--border); color: var(--muted);
+}
+.pt-step.done { color: var(--text); }
+.pt-step.done .pt-dot { background: rgba(255,215,0,0.14); border-color: rgba(255,215,0,0.45); color: var(--yellow); }
+.pt-step.current { color: var(--yellow); }
+.pt-step.current .pt-dot { background: var(--yellow); border-color: var(--yellow); color: #000; }
+
+/* ═══════════ DRAFT: SELECT → CONFIRM ═══════════ */
+.poke-card.selected {
+  border-color: var(--yellow);
+  box-shadow: 0 0 0 2px var(--yellow), 0 8px 24px rgba(255,215,0,0.2);
+  transform: translateY(-3px);
+}
+.poke-card:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+
+.draft-confirm {
+  display: none; flex-shrink: 0;
+  padding: 10px 14px; background: var(--surface2);
+  border-top: 1px solid rgba(255,215,0,0.45);
+}
+.draft-confirm.visible { display: block; }
+
+.dc-row {
+  display: grid; align-items: center; gap: 14px;
+  grid-template-columns: 56px minmax(140px, 1fr) minmax(220px, 1.4fr) auto;
+}
+.dc-row.dc-row-undo { display: flex; justify-content: flex-end; }
+.dc-row img { width: 56px; height: 56px; image-rendering: pixelated; }
+.dc-info { min-width: 0; }
+.dc-name {
+  font-size: 17px; font-weight: 700; text-transform: capitalize;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dc-name span { font-size: 13px; color: var(--muted); text-transform: none; }
+.dc-types { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
+.dc-types em { font-style: normal; font-size: 12px; font-weight: 700; color: var(--yellow); text-transform: uppercase; margin-left: 4px; }
+
+.dc-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 12px; }
+.dc-stat { display: grid; grid-template-columns: 30px 1fr 28px; align-items: center; gap: 6px; font-size: 12px; }
+.dc-stat span { color: var(--muted); font-weight: 700; }
+.dc-stat i { height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.dc-stat b { display: block; height: 100%; background: var(--yellow); }
+.dc-stat strong { text-align: right; }
+
+.dc-actions { display: flex; gap: 8px; align-items: center; }
+.dc-actions button, .dc-undo {
+  min-height: 38px; padding: 0 14px; border-radius: 6px; cursor: pointer;
+  font-family: 'Rajdhani', sans-serif; font-size: 14px; font-weight: 700;
+}
+.dc-cancel, .dc-undo {
+  background: transparent; color: var(--text); border: 1px solid var(--border);
+}
+.dc-cancel:hover, .dc-undo:hover { border-color: var(--muted); }
+.dc-confirm {
+  background: var(--yellow); color: #000; border: 2px solid var(--team, var(--yellow));
+}
+.dc-poke-name { text-transform: capitalize; }
+.dc-confirm:hover { filter: brightness(1.08); }
+
+/* ═══════════ FREE AGENCY: WHOSE TURN ═══════════ */
+.fa-clock-banner {
+  width: 100%; max-width: 1400px; margin: 0 auto 14px;
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 14px 16px; border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.fa-clock-banner.human { border-color: var(--yellow); background: rgba(255,215,0,0.07); }
+.fa-clock-banner.cpu .fcb-title { animation: thinking 1.2s ease-in-out infinite; }
+.fa-clock-banner.done { border-color: rgba(77,255,145,0.5); }
+.fa-clock-banner:empty { display: none; }
+
+.fcb-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 19px; font-weight: 700; color: var(--text);
+}
+.fa-clock-banner.human .fcb-title { color: var(--yellow); }
+.fcb-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.fcb-sub { margin-top: 3px; font-size: 14px; color: var(--muted); }
+.fcb-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.fcb-pass, .fcb-back {
+  min-height: 42px; padding: 0 20px; border-radius: 8px; cursor: pointer;
+  font-family: 'Rajdhani', sans-serif; font-size: 15px; font-weight: 700;
+}
+.fcb-pass { background: transparent; color: var(--yellow); border: 2px solid var(--yellow); }
+.fcb-pass:hover { background: rgba(255,215,0,0.12); }
+.fcb-back { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+
+.free-agent-card.claimable .fa-card-action { background: var(--yellow); color: #000; }
+.free-agent-card:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+
+.btn-fa-primary.armed { background: transparent; color: var(--yellow); box-shadow: inset 0 0 0 2px var(--yellow); }
+
 /* ═══════════════════════════════════════
    MOBILE RESPONSIVE  (≤ 640px)
    ═══════════════════════════════════════ */
@@ -2125,6 +2250,22 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
 }
 
 @media (max-width: 640px) {
+
+  /* ── Phase tracker: numbers only, label for the current step ── */
+  :root { --tracker-h: 40px; }
+  .phase-tracker { padding: 0 10px; gap: 10px; }
+  .pt-gen span:last-child { display: none; }
+  .pt-steps { gap: 4px; }
+  .pt-step .pt-label { display: none; }
+  .pt-step.current .pt-label { display: inline; }
+  .pt-step + .pt-step::before { width: 8px; }
+
+  /* ── Draft confirm bar ── */
+  .dc-row { grid-template-columns: 44px minmax(0, 1fr); gap: 8px; }
+  .dc-row img { width: 44px; height: 44px; }
+  .dc-stats { grid-column: 1 / -1; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .dc-actions { grid-column: 1 / -1; flex-wrap: wrap; }
+  .dc-actions button { flex: 1; min-height: 42px; }
 
   /* ── Setup ── */
   .setup-card { padding: 24px 18px; }
@@ -2232,7 +2373,9 @@ select:focus, .team-name-field:focus { border-color: var(--yellow); }
   .free-agent-side { position: static; }
   .free-agent-roster { max-height: 260px; }
   .fa-waiver-head { align-items: flex-start; flex-direction: column; }
-  .fa-pass-btn { width: 100%; }
+  .fa-clock-banner { flex-direction: column; align-items: stretch; }
+  .fcb-actions { flex-direction: column; }
+  .fcb-pass, .fcb-back { width: 100%; }
   .fa-history-filters { grid-template-columns: 1fr; }
   .fa-history-summary { padding: 0 10px; }
   .fa-history-row,
