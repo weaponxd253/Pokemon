@@ -125,6 +125,9 @@ let faHistoryDraft = 'current', faHistoryTeam = 'all', faHistoryMove = 'all';
 let faWaiverDraft = 'current', faWaiverTeam = 'all', faWaiverSource = 'all';
 let faDropId = null, faNotice = '', faCpuThinking = false, faCpuPassStreak = 0;
 let cpuThinking = false;
+let selectedDraftId = null;   // card picked but not yet confirmed
+let lastHumanPick = null;     // { teamIdx, pokeId } — enables a one-step undo
+let faContinueArmed = false;  // second click on "Continue" skips open waiver turns
 let season = null;
 let selectedBattleLogs = { season: null, playoff: null };
 let battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
@@ -426,6 +429,10 @@ function cpuBadgeHtml(team, extraClass = '', options = {}) {
   const label = config.label;
   const display = options.compact ? config.short : label;
   return `<span class="tt-cpu-badge cpu-personality-badge cpu-personality-${key}${extraClass ? ` ${extraClass}` : ''}" title="${label} CPU personality" aria-label="${label} CPU personality"><span class="cpu-badge-kind">CPU</span><span class="cpu-badge-label">${display}</span></span>`;
+}
+
+function possessive(name) {
+  return /s$/i.test(name) ? `${name}'` : `${name}'s`;
 }
 
 function shuffleArray(arr) {
@@ -1803,6 +1810,7 @@ async function startDraft() {
   currentPickInRound = 0;
   draftedIds = new Set();
   season = null;
+  selectedDraftId = null; lastHumanPick = null; faContinueArmed = false;
   selectedBattleLogs = { season: null, playoff: null };
   faSort = 'recommended'; faSearch = ''; faType = ''; faTeamIdx = 0; faHistoryDraft = 'current'; faHistoryTeam = 'all'; faHistoryMove = 'all'; faWaiverDraft = 'current'; faWaiverTeam = 'all'; faWaiverSource = 'all'; faDropId = null; faNotice = ''; faCpuThinking = false; faCpuPassStreak = 0;
   numTeams = Math.min(MAX_TEAMS, parseInt(document.getElementById('numTeamsRange').value));
@@ -1835,6 +1843,7 @@ async function startDraft() {
 
   document.getElementById('loadingScreen').style.display = 'none';
   document.getElementById('draftScreen').style.display = 'flex';
+  setPhaseTracker('draft');
 
   refreshHeader();
   refreshSnakeBar();
@@ -1847,6 +1856,7 @@ async function startDraft() {
 // ── Data Loading ──
 async function loadGen(genIdx) {
   const gen = GENS[genIdx];
+  setPhaseTracker(null);
   document.getElementById('loadLabel').textContent = `Loading ${gen.label}`;
   document.getElementById('loadingScreen').style.display = 'flex';
   document.getElementById('progressFill').style.width = '0%';
@@ -2447,6 +2457,46 @@ function triggerCpuIfNeeded() {
   setTimeout(cpuPick, 800 + Math.random() * 800);
 }
 
+// ── Phase Tracker ──
+const PHASE_STEPS = [
+  { key: 'draft', label: 'Draft' },
+  { key: 'rosters', label: 'Rosters' },
+  { key: 'freeAgency', label: 'Free Agency' },
+  { key: 'season', label: 'Season' },
+  { key: 'playoffs', label: 'Playoffs' },
+  { key: 'results', label: 'Results' },
+];
+
+function setPhaseTracker(stepKey) {
+  const tracker = document.getElementById('phaseTracker');
+  if (!tracker) return;
+  if (!stepKey) {
+    tracker.classList.remove('visible');
+    document.body.classList.remove('has-phase-tracker');
+    return;
+  }
+
+  const gen = GENS[currentGenIdx];
+  const startGenIdx = season?.settings?.startGenIdx ?? currentGenIdx;
+  const genNumber = currentGenIdx - startGenIdx + 1;
+  const genTotal = GENS.length - startGenIdx;
+  const region = gen.label.split('—')[1]?.trim() ?? gen.label;
+  document.getElementById('phaseTrackerGen').innerHTML =
+    `<span class="pt-gen-badge" style="background:${gen.color}">${gen.short}</span>` +
+    `<span>${region} · Gen ${genNumber} of ${genTotal}</span>`;
+
+  const currentIdx = PHASE_STEPS.findIndex(step => step.key === stepKey);
+  document.getElementById('phaseTrackerSteps').innerHTML = PHASE_STEPS.map((step, idx) => {
+    const state = idx < currentIdx ? 'done' : idx === currentIdx ? 'current' : 'upcoming';
+    return `<li class="pt-step ${state}"${state === 'current' ? ' aria-current="step"' : ''}>` +
+      `<span class="pt-dot">${state === 'done' ? '✓' : idx + 1}</span>` +
+      `<span class="pt-label">${step.label}</span></li>`;
+  }).join('');
+
+  tracker.classList.add('visible');
+  document.body.classList.add('has-phase-tracker');
+}
+
 // ── Rendering ──
 function populateTypeFilter() {
   const types = new Set();
@@ -2469,7 +2519,7 @@ function refreshHeader() {
   const picker = document.getElementById('dhPicker');
   picker.innerHTML = '';
   const pickText = document.createElement('span');
-  pickText.textContent = `${team.name}'s Pick`;
+  pickText.textContent = `${possessive(team.name)} Pick`;
   picker.appendChild(pickText);
   if (team.isCpu) {
     picker.insertAdjacentHTML('beforeend', cpuBadgeHtml(team, 'dh-cpu-personality', { compact: true }));
@@ -2553,7 +2603,8 @@ function refreshGrid() {
     const isDrafted = owned.has(poke.id);
     const rec = isDrafted ? null : draftRecommendationScore(poke);
     const card = document.createElement('div');
-    card.className = 'poke-card' + (isDrafted ? ' drafted' : '') + (rec?.score >= 82 ? ' recommended-pick' : '');
+    card.className = 'poke-card' + (isDrafted ? ' drafted' : '') + (rec?.score >= 82 ? ' recommended-pick' : '') +
+      (poke.id === selectedDraftId ? ' selected' : '');
     card.dataset.id = poke.id;
     card.innerHTML = `
       ${rec ? `<div class="pc-fit" title="${recommendationTitle(rec)}"><span>Fit</span><strong>${rec.score}</strong></div>` : ''}
@@ -2566,13 +2617,126 @@ function refreshGrid() {
       <div class="pc-bst">${poke.bst}</div>
     `;
     if (!isDrafted) {
-      card.addEventListener('click', () => {
-        if (cpuThinking) return;
-        draftPokemon(poke);
+      card.tabIndex = 0;
+      card.setAttribute('role', 'button');
+      card.setAttribute('aria-label', `Select ${poke.name}, base stat total ${poke.bst}`);
+      card.addEventListener('click', () => selectDraftCandidate(poke.id));
+      card.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          selectDraftCandidate(poke.id);
+        }
       });
     }
     grid.appendChild(card);
   });
+  renderDraftConfirm();
+}
+
+// First click selects a card; clicking it again (or the Draft button) confirms.
+function selectDraftCandidate(pokeId) {
+  if (cpuThinking || teams[currentTeamIdx()]?.isCpu) return;
+  if (selectedDraftId === pokeId) {
+    confirmDraftPick();
+    return;
+  }
+  selectedDraftId = pokeId;
+  document.querySelectorAll('.poke-card.selected').forEach(card => card.classList.remove('selected'));
+  document.querySelector(`.poke-card[data-id="${pokeId}"]`)?.classList.add('selected');
+  renderDraftConfirm();
+}
+
+function clearDraftSelection() {
+  if (selectedDraftId === null) return;
+  selectedDraftId = null;
+  document.querySelectorAll('.poke-card.selected').forEach(card => card.classList.remove('selected'));
+  renderDraftConfirm();
+}
+
+function confirmDraftPick() {
+  if (cpuThinking) return;
+  const poke = allPokemon.find(p => p.id === selectedDraftId);
+  selectedDraftId = null;
+  if (poke) draftPokemon(poke);
+  else renderDraftConfirm();
+}
+
+function canUndoDraftPick() {
+  if (!lastHumanPick || cpuThinking || currentRound >= numRounds) return false;
+  const pickNum = currentPickNum();
+  if (pickNum === 0 || snakeOrder[pickNum - 1] !== lastHumanPick.teamIdx) return false;
+  // A CPU on the clock has already scheduled its pick, so only undo between human turns.
+  return !teams[currentTeamIdx()]?.isCpu;
+}
+
+function undoLastDraftPick() {
+  if (!canUndoDraftPick()) return;
+  const { teamIdx, pokeId } = lastHumanPick;
+  const team = teams[teamIdx];
+  team.picks = team.picks.filter(p => p.id !== pokeId);
+  team.activeIds = (team.activeIds ?? []).filter(id => id !== pokeId);
+  lastHumanPick = null;
+
+  if (currentPickInRound === 0) {
+    currentRound--;
+    currentPickInRound = numTeams - 1;
+  } else {
+    currentPickInRound--;
+  }
+  syncDraftedIdsWithOwnership();
+  selectedDraftId = pokeId;
+
+  refreshHeader();
+  refreshSnakeBar();
+  refreshGrid();
+  refreshTeams();
+  saveSeason(buildSeasonState(SEASON_PHASES.DRAFT, 'inProgress'));
+}
+
+function renderDraftConfirm() {
+  const bar = document.getElementById('draftConfirm');
+  if (!bar) return;
+  const poke = selectedDraftId !== null ? allPokemon.find(p => p.id === selectedDraftId) : null;
+  const team = teams[currentTeamIdx()];
+  const undo = canUndoDraftPick()
+    ? (() => {
+        const undoTeam = teams[lastHumanPick.teamIdx];
+        const undoPoke = undoTeam?.picks.find(p => p.id === lastHumanPick.pokeId);
+        return `<button class="dc-undo" onclick="undoLastDraftPick()">↶ Undo ${undoTeam ? possessive(undoTeam.name) : 'last'} pick${undoPoke ? ` (<span class="dc-poke-name">${undoPoke.name}</span>)` : ''}</button>`;
+      })()
+    : '';
+
+  if (!poke || !team || team.isCpu) {
+    bar.innerHTML = undo ? `<div class="dc-row dc-row-undo">${undo}</div>` : '';
+    bar.classList.toggle('visible', Boolean(undo));
+    return;
+  }
+
+  const rec = draftRecommendationScore(poke, team);
+  const stats = [
+    ['HP', 'hp'], ['Atk', 'attack'], ['Def', 'defense'],
+    ['SpA', 'special-attack'], ['SpD', 'special-defense'], ['Spe', 'speed'],
+  ].map(([label, key]) => {
+    const value = poke.stats?.[key] ?? 0;
+    return `<div class="dc-stat"><span>${label}</span><i><b style="width:${Math.min(100, value / 1.6)}%"></b></i><strong>${value}</strong></div>`;
+  }).join('');
+
+  bar.innerHTML = `
+    <div class="dc-row">
+      <img src="${poke.sprite}" alt="" onerror="this.style.visibility='hidden'">
+      <div class="dc-info">
+        <div class="dc-name">${poke.name} <span>#${String(poke.id).padStart(3, '0')} · BST ${poke.bst}</span></div>
+        <div class="dc-types">${typePills(poke.types)} <em>${rec.reason}</em></div>
+      </div>
+      <div class="dc-stats">${stats}</div>
+      <div class="dc-actions">
+        ${undo}
+        <button class="dc-cancel" onclick="clearDraftSelection()">Cancel</button>
+        <button class="dc-confirm" style="--team:${team.color}" onclick="confirmDraftPick()">Draft <span class="dc-poke-name">${poke.name}</span> for ${team.name}</button>
+      </div>
+    </div>
+  `;
+  bar.classList.add('visible');
 }
 
 function refreshTeams() {
@@ -2625,6 +2789,8 @@ function draftPokemon(poke) {
     return;
   }
   team.picks.push(poke);
+  selectedDraftId = null;
+  lastHumanPick = team.isCpu ? null : { teamIdx: ti, pokeId: poke.id };
   if ((team.activeIds ?? []).length < ACTIVE_ROSTER_SIZE) {
     team.activeIds ??= [];
     team.activeIds.push(poke.id);
@@ -2701,6 +2867,9 @@ function showRosterScreen() {
   document.getElementById('rosterScreen').style.display = 'flex';
 
   prepareActiveRosterLocks();
+  selectedDraftId = null;
+  lastHumanPick = null;
+  setPhaseTracker('rosters');
   const gen = GENS[currentGenIdx];
   document.getElementById('rosterTitle').textContent = `${gen.label} Active Rosters`;
   renderRosterScreen();
@@ -2783,6 +2952,8 @@ function showFreeAgentScreen() {
   document.getElementById('freeAgentScreen').style.display = 'flex';
 
   getWaiverOrder();
+  setPhaseTracker('freeAgency');
+  faContinueArmed = false;
   faTeamIdx = currentWaiverTeamIdx();
   const savedFreeAgency = normalizeFreeAgencyState(season?.freeAgencyState, draftNumber, teams.length);
   const resumingCurrentWindow = savedFreeAgency.draftId === draftNumber && savedFreeAgency.status === 'open';
@@ -2816,7 +2987,7 @@ function populateFreeAgentControls() {
   const teamSelect = document.getElementById('faTeamSelect');
   if (teamSelect) {
     teamSelect.innerHTML = teams.map((team, idx) =>
-      `<option value="${idx}">${idx === currentWaiverTeamIdx() ? '★ ' : ''}${team.name}${team.isCpu ? ` (${cpuPersonalityLabel(team)} CPU)` : ''}</option>`
+      `<option value="${idx}">${idx === currentWaiverTeamIdx() ? 'On clock: ' : 'View: '}${team.name}${team.isCpu ? ` (${cpuPersonalityLabel(team)} CPU)` : ''}</option>`
     ).join('');
     teamSelect.value = String(faTeamIdx);
     teamSelect.disabled = faCpuThinking;
@@ -3031,8 +3202,7 @@ function renderFreeAgentScreen() {
       <div class="fa-team-meta">${count}/${limit} owned · ${(team.activeIds ?? []).length}/${ACTIVE_ROSTER_SIZE} active · ${benchCount} bench · waiver #${rank ?? '-'}</div>
       <div class="fa-waiver-panel">
         <div class="fa-waiver-head">
-          <span>${currentClaimTeam ? `${currentClaimTeam.name} on claim` : 'Waiver claim order'}</span>
-          <button class="fa-pass-btn" onclick="passWaiverClaim()"${faCpuThinking ? ' disabled' : ''}>Pass Claim</button>
+          <span>Waiver order</span>
         </div>
         <div class="fa-waiver-pills">${waiverOrderPills()}</div>
       </div>
@@ -3070,6 +3240,7 @@ function renderFreeAgentScreen() {
       }).join('') || '<div class="fa-empty">No owned Pokémon</div>';
   }
 
+  renderFreeAgentClockBanner();
   renderFreeAgencyHistory();
   renderWaiverActivity();
 
@@ -3077,13 +3248,14 @@ function renderFreeAgentScreen() {
   grid.innerHTML = list.length ? list.map(poke => {
     const rec = team ? draftRecommendationScore(poke, team) : null;
     const canClaim = canClaimFreeAgent(team, poke, faTeamIdx) && !faCpuThinking;
+    const claimable = canClaim ? ' claimable' : '';
     const actionText = !onClock
       ? 'Waiting'
       : faCpuThinking ? 'CPU Thinking'
       : selectedDrop ? `Claim / Drop ${selectedDrop.name}`
       : (atLimit ? 'Choose Drop' : 'Claim');
     return `
-      <button class="free-agent-card${canClaim ? '' : ' disabled'}" onclick="claimFreeAgent(${poke.id})"${canClaim ? '' : ' disabled'}>
+      <button class="free-agent-card${canClaim ? '' : ' disabled'}${claimable}" onclick="claimFreeAgent(${poke.id})"${canClaim ? '' : ' disabled'}>
         ${rec ? `<span class="fa-fit" title="${recommendationTitle(rec)}">Fit ${rec.score}</span>` : ''}
         <img src="${poke.sprite}" alt="${poke.name}" onerror="this.style.visibility='hidden'">
         <span class="fa-num">#${String(poke.id).padStart(3, '0')}</span>
@@ -3094,6 +3266,71 @@ function renderFreeAgentScreen() {
       </button>
     `;
   }).join('') : '<div class="fa-empty">No free agents match the current filters</div>';
+}
+
+function isWaiverCycleComplete() {
+  return faCpuPassStreak >= teams.length;
+}
+
+function renderFreeAgentClockBanner() {
+  const banner = document.getElementById('faClockBanner');
+  const continueBtn = document.getElementById('btnFaContinue');
+  if (continueBtn) {
+    continueBtn.textContent = faContinueArmed && !isWaiverCycleComplete()
+      ? 'Skip Remaining Claims →'
+      : 'Continue to Season';
+    continueBtn.classList.toggle('armed', faContinueArmed && !isWaiverCycleComplete());
+  }
+  if (!banner) return;
+
+  const clockIdx = currentWaiverTeamIdx();
+  const clockTeam = teams[clockIdx];
+  if (!clockTeam) {
+    banner.innerHTML = '';
+    return;
+  }
+  const dot = `<span class="fcb-dot" style="background:${clockTeam.color}"></span>`;
+  const passed = `${faCpuPassStreak} of ${teams.length} teams passed in a row`;
+  let title;
+  let sub;
+  let actions = '';
+  let tone = '';
+
+  if (isWaiverCycleComplete()) {
+    tone = ' done';
+    title = 'Waiver cycle complete';
+    sub = 'Every team passed. Continue to the season when ready.';
+  } else if (faCpuThinking || clockTeam.isCpu) {
+    tone = ' cpu';
+    title = `${dot}${clockTeam.name} is deciding…`;
+    sub = `CPU claims resolve automatically · ${passed}`;
+  } else {
+    const atLimit = rosterCount(clockTeam) >= rosterLimit();
+    const drop = selectedFreeAgentDrop(clockTeam);
+    tone = ' human';
+    title = `${dot}${clockTeam.name} — your claim`;
+    sub = atLimit && !drop
+      ? 'Roster is full: mark a bench Pokémon to drop, then pick a free agent — or pass.'
+      : drop
+        ? `Claiming will drop ${drop.name}. Pick a free agent, or pass.`
+        : 'Pick a free agent to claim, or pass your turn.';
+    actions = `<button class="fcb-pass" onclick="passWaiverClaim()">Pass Claim</button>`;
+  }
+
+  if (faTeamIdx !== clockIdx && !isWaiverCycleComplete()) {
+    const viewing = teams[faTeamIdx];
+    sub = `Viewing ${viewing ? possessive(viewing.name) : "another team's"} roster. ${sub}`;
+    actions = `<button class="fcb-back" onclick="selectFreeAgentTeam(${clockIdx})">Back to ${clockTeam.name}</button>${actions}`;
+  }
+
+  banner.className = `fa-clock-banner${tone}`;
+  banner.innerHTML = `
+    <div class="fcb-text">
+      <div class="fcb-title">${title}</div>
+      <div class="fcb-sub">${sub}</div>
+    </div>
+    <div class="fcb-actions">${actions}</div>
+  `;
 }
 
 function claimFreeAgent(pokeId, options = {}) {
@@ -3127,6 +3364,7 @@ function claimFreeAgent(pokeId, options = {}) {
       : `${poke.name} claimed by ${team.name}.`;
   }
   team.picks.push(poke);
+  faContinueArmed = false;
   syncDraftedIdsWithOwnership();
   recordFreeAgencyTransaction({
     teamIdx,
@@ -3159,6 +3397,7 @@ function passWaiverClaim(options = {}) {
   if (!passingTeam) return;
   const waiverRankBefore = waiverRank(passingIdx);
   const passNumberInCycle = faCpuPassStreak + 1;
+  faContinueArmed = false;
   rotateWaiverOrder(passingIdx);
   faTeamIdx = currentWaiverTeamIdx();
   faDropId = null;
@@ -3260,6 +3499,13 @@ function selectFreeAgentTeam(value) {
 }
 
 function continueAfterFreeAgents() {
+  if (!isWaiverCycleComplete() && !faContinueArmed) {
+    faContinueArmed = true;
+    faNotice = `Free agency is still open (${faCpuPassStreak} of ${teams.length} teams passed in a row). Press "Skip Remaining Claims" to start the season anyway.`;
+    renderFreeAgentScreen();
+    return;
+  }
+  faContinueArmed = false;
   faDropId = null;
   faNotice = '';
   faCpuThinking = false;
@@ -3518,6 +3764,7 @@ function showSeasonScreen() {
   document.getElementById('seasonScreen').style.display = 'flex';
 
   const gen = GENS[currentGenIdx];
+  setPhaseTracker('season');
   ensureActiveRosters();
   ensureRegularSeasonSchedule();
   syncSeason(SEASON_PHASES.REGULAR_SEASON, 'complete');
@@ -3635,6 +3882,7 @@ function showPlayoffScreen() {
   document.getElementById('playoffScreen').style.display = 'flex';
 
   const gen = GENS[currentGenIdx];
+  setPhaseTracker('playoffs');
   ensurePlayoffBracket();
   syncSeason(SEASON_PHASES.PLAYOFFS, 'complete');
   renderPlayoffScreen();
@@ -3767,6 +4015,7 @@ function showLobby() {
 
   const gen = GENS[currentGenIdx];
   const nextGen = GENS[currentGenIdx + 1];
+  setPhaseTracker('results');
 
   document.getElementById('lobbyGenComplete').textContent = `${gen.label} Complete`;
   document.getElementById('lobbyDraftNum').textContent =
@@ -3835,6 +4084,8 @@ async function continueToNextGen() {
   currentRound = 0;
   currentPickInRound = 0;
   cpuThinking = false;
+  selectedDraftId = null;
+  lastHumanPick = null;
   selectedBattleLogs = { season: null, playoff: null };
   faDropId = null;
   faNotice = '';
@@ -3856,6 +4107,7 @@ async function continueToNextGen() {
 
   document.getElementById('loadingScreen').style.display = 'none';
   document.getElementById('draftScreen').style.display = 'flex';
+  setPhaseTracker('draft');
 
   refreshHeader();
   refreshSnakeBar();
@@ -3885,6 +4137,7 @@ function showComplete() {
   document.getElementById('playoffScreen').style.display = 'none';
   document.getElementById('lobbyScreen').style.display = 'none';
   document.getElementById('completeScreen').style.display = 'flex';
+  setPhaseTracker('results');
 
   const regularSeasonStandings = buildRegularSeasonStandings(getCurrentDraftSchedule());
   const hasSeasonResults = regularSeasonStandings.some(entry => entry.wins || entry.losses);
@@ -3971,6 +4224,8 @@ function restart() {
   clearBattlePlaybackTimer();
   battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
   _savedForResume = null;
+  selectedDraftId = null; lastHumanPick = null; faContinueArmed = false;
+  setPhaseTracker(null);
   curSort = 'recommended'; curSearch = ''; curType = '';
   faSort = 'recommended'; faSearch = ''; faType = ''; faTeamIdx = 0; faHistoryDraft = 'current'; faHistoryTeam = 'all'; faHistoryMove = 'all'; faWaiverDraft = 'current'; faWaiverTeam = 'all'; faWaiverSource = 'all'; faDropId = null; faNotice = ''; faCpuThinking = false; faCpuPassStreak = 0;
   document.getElementById('typeFilter').innerHTML = '<option value="">All Types</option>';
@@ -4031,6 +4286,11 @@ function flashRosterTab() {
   setMobileTab('teams');
   setTimeout(() => setMobileTab('pokemon'), 1200);
 }
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (document.getElementById('draftScreen')?.style.display === 'flex') clearDraftSelection();
+});
 
 // ── Init ──
 // ── Resume Screen ──
@@ -4154,6 +4414,8 @@ async function restoreSeason(saved) {
   faDropId = null;
   faNotice = '';
   faCpuThinking = false;
+  selectedDraftId = null;
+  lastHumanPick = null;
   faCpuPassStreak = normalizeFreeAgencyState(
     season?.freeAgencyState,
     draftNumber,
@@ -4195,6 +4457,7 @@ async function restoreSeason(saved) {
   }
 
   document.getElementById('draftScreen').style.display = 'flex';
+  setPhaseTracker('draft');
   refreshHeader();
   refreshSnakeBar();
   refreshGrid();
