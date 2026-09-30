@@ -13,6 +13,14 @@
 <nav class="phase-tracker" id="phaseTracker" aria-label="Season progress">
   <div class="pt-gen" id="phaseTrackerGen"></div>
   <ol class="pt-steps" id="phaseTrackerSteps"></ol>
+  <label class="pt-speed" title="How fast CPU teams pick and claim">
+    <span>CPU speed</span>
+    <select id="cpuSpeedSelect" onchange="setCpuSpeed(this.value)">
+      <option value="normal">Normal</option>
+      <option value="fast">Fast</option>
+      <option value="instant">Instant</option>
+    </select>
+  </label>
 </nav>
 
 <!-- ══════════════ RESUME ══════════════ -->
@@ -70,7 +78,17 @@
         <option value="3">Gen 4 — Sinnoh (start here)</option>
       </select>
     </div>
+    <div class="form-group">
+      <label class="form-label" for="setupCpuSpeed">CPU Speed</label>
+      <select id="setupCpuSpeed" onchange="setCpuSpeed(this.value)">
+        <option value="normal">Normal — watch every pick</option>
+        <option value="fast">Fast</option>
+        <option value="instant">Instant — skip the wait</option>
+      </select>
+    </div>
     <button class="btn-primary" onclick="startDraft()">▶ &nbsp;START DRAFT</button>
+    <button class="btn-quick-start" onclick="quickStart()">⚡ Quick Start — You vs 3 CPUs</button>
+    <div class="setup-remembered" id="setupRemembered"></div>
   </div>
   <div class="hof" id="hallOfFame"></div>
 </div>
@@ -83,6 +101,7 @@
   </div>
   <div class="load-count" id="loadCount">0 / 0</div>
   <div class="load-name" id="loadName"></div>
+  <div class="load-error" id="loadError" role="alert"></div>
 </div>
 
 <!-- ══════════════ DRAFT ══════════════ -->
@@ -112,6 +131,7 @@
           <option value="name">Name A–Z</option>
           <option value="id">Pokédex #</option>
         </select>
+        <button class="btn-pick-for-me" id="btnPickForMe" onclick="pickForMe()">⚡ Pick for me</button>
       </div>
       <div class="poke-grid" id="pokeGrid"></div>
     </div>
@@ -256,6 +276,7 @@
   <div class="season-actions">
     <button class="btn-season-primary" id="btnSimWeek" onclick="simulateNextWeek()">Simulate Week</button>
     <button class="btn-season-secondary" id="btnSimAll" onclick="simulateAllSeason()">Simulate All</button>
+    <button class="btn-season-secondary" id="btnSimToPlayoffs" onclick="simToPlayoffs()">Sim to Playoffs →</button>
     <button class="btn-season-continue" id="btnSeasonContinue" onclick="continueAfterRegularSeason()">Continue</button>
   </div>
 </div>
@@ -330,7 +351,7 @@
   </div>
 
   <div class="lobby-section">
-    <div class="lobby-section-lbl">Standings</div>
+    <div class="lobby-section-lbl" id="lobbyStandingsLabel">Standings</div>
     <div class="lobby-standings-grid" id="lobbyStandings"></div>
   </div>
 

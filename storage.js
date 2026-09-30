@@ -100,3 +100,24 @@ function saveHallOfFame(list) {
     console.warn('Hall of Fame save failed:', e);
   }
 }
+
+// ── localStorage: preferences (CPU speed, last setup) ────────────────────
+
+const PREFS_KEY = 'pokedraft_prefs';
+
+function loadPrefs() {
+  try {
+    const prefs = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}');
+    return prefs && typeof prefs === 'object' ? prefs : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function savePrefs(patch) {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ ...loadPrefs(), ...patch }));
+  } catch (e) {
+    console.warn('Preferences save failed:', e);
+  }
+}
