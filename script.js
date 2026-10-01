@@ -4592,10 +4592,86 @@ function currentBattlePlaybackSteps() {
   return game ? buildPlaybackSteps(game) : [];
 }
 
+// ── Predictions ──
+// Lifetime record lives in localStorage; which skirmishes were already
+// called lives on the season, so re-watching a game can't farm the streak.
+const PREDICTION_KEY = 'pokedraft_predictions';
+
+function loadPredictionStats() {
+  try {
+    const stats = JSON.parse(localStorage.getItem(PREDICTION_KEY) ?? '{}');
+    return { made: stats.made ?? 0, correct: stats.correct ?? 0, streak: stats.streak ?? 0, best: stats.best ?? 0 };
+  } catch (e) {
+    return { made: 0, correct: 0, streak: 0, best: 0 };
+  }
+}
+
+function savePredictionStats(stats) {
+  try { localStorage.setItem(PREDICTION_KEY, JSON.stringify(stats)); } catch (e) { /* storage full / blocked */ }
+}
+
+function predictModeOn() {
+  return loadPrefs().predictMode === true;
+}
+
+function togglePredictMode() {
+  savePrefs({ predictMode: !predictModeOn() });
+  if (battlePlayback.phase === 'predict' && !predictModeOn()) bpRevealAfterPredict();
+  else renderBattleControls();
+}
+
+function predictionKey(game, step) {
+  return `${season?.startedAt ?? 's'}|${game.id}|${step.setNumber}`;
+}
+
+function alreadyPredicted(game, step) {
+  return (season?.predictedKeys ?? []).includes(predictionKey(game, step));
+}
+
+function predictSkirmish(side) {
+  if (battlePlayback.phase !== 'predict') return;
+  const game = currentBattlePlaybackGame();
+  const step = currentBattlePlaybackSteps()[battlePlayback.stepIdx];
+  if (!game || !step) return;
+  const pickedIdx = side === 'A' ? game.teamAIdx : game.teamBIdx;
+  const correct = step.winnerIdx === pickedIdx;
+  const stats = loadPredictionStats();
+  stats.made++;
+  if (correct) { stats.correct++; stats.streak++; stats.best = Math.max(stats.best, stats.streak); }
+  else stats.streak = 0;
+  savePredictionStats(stats);
+  ensureSeason().predictedKeys ??= [];
+  season.predictedKeys.push(predictionKey(game, step));
+  if (season.predictedKeys.length > 2000) season.predictedKeys = season.predictedKeys.slice(-2000);
+  battlePlayback.guess = { side, correct, streak: stats.streak };
+  saveSeason(buildSeasonState());
+  bpRevealAfterPredict();
+}
+
+function bpRevealAfterPredict() {
+  bpClearTimers();
+  battlePlayback.phase = 'intro';
+  renderBattlePlayback();
+  bpSchedule(() => { battlePlayback.phase = 'clash'; renderBattlePlayback(); }, BP_TIMING.clash);
+  bpSchedule(() => {
+    battlePlayback.phase = 'result';
+    renderBattlePlayback(true);
+    if (battlePlayback.playing) bpSchedule(bpAdvance, BP_TIMING.dwell);
+  }, BP_TIMING.clash * 2);
+}
+
 function bpGoToStep(idx, animate = true) {
   bpClearTimers();
   battlePlayback.stepIdx = idx;
   battlePlayback.final = false;
+  battlePlayback.guess = null;
+  const game = currentBattlePlaybackGame();
+  const step = currentBattlePlaybackSteps()[idx];
+  if (animate && predictModeOn() && game && step && !alreadyPredicted(game, step)) {
+    battlePlayback.phase = 'predict';
+    renderBattlePlayback();
+    return;
+  }
   if (!animate || prefersReducedMotion()) {
     battlePlayback.phase = 'result';
     renderBattlePlayback(false);
@@ -4652,6 +4728,7 @@ function closeBattlePlayback() {
 // Next: finish the current reveal first, then move on (or to the final card).
 function nextBattleStep() {
   if (!currentBattlePlaybackSteps().length || battlePlayback.final) return;
+  if (battlePlayback.phase === 'predict') { bpRevealAfterPredict(); return; }
   if (battlePlayback.phase !== 'result') {
     bpClearTimers();
     battlePlayback.phase = 'result';
@@ -4705,7 +4782,8 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowRight') { e.preventDefault(); nextBattleStep(); }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); prevBattleStep(); }
   else if (e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); toggleBattleAutoplay(); }
-  else if (e.key === 'Escape') { e.preventDefault(); closeBattlePlayback(); }
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); closeBattlePlayback(); }
+  else if (battlePlayback.phase === 'predict' && (e.key === '1' || e.key === '2')) { e.preventDefault(); predictSkirmish(e.key === '1' ? 'A' : 'B'); }
 });
 
 // Upset = the winner entered with under 35% odds.
@@ -4919,6 +4997,14 @@ function renderBattleControls() {
   if (btnNext) btnNext.disabled = final || !steps.length;
   if (btnSkip) btnSkip.disabled = final;
   if (btnAuto) btnAuto.textContent = battlePlayback.playing ? '❚❚ Pause' : final ? '↻ Replay' : '▶ Auto Play';
+  const predictBtn = document.getElementById('btnBattlePredict');
+  if (predictBtn) {
+    const on = predictModeOn();
+    const st = loadPredictionStats();
+    predictBtn.classList.toggle('on', on);
+    predictBtn.setAttribute('aria-pressed', String(on));
+    predictBtn.innerHTML = `🎯 Predict${on ? '' : ' off'}${st.made ? ` <small>${st.correct}/${st.made} · 🔥${st.streak} · best ${st.best}</small>` : ''}`;
+  }
   document.querySelectorAll('.bp-speed button').forEach(btn => {
     const on = Number(btn.dataset.speed) === (battlePlayback.speed || 1);
     btn.classList.toggle('on', on);
@@ -4983,11 +5069,26 @@ function renderBattlePlayback(animateHp = false) {
   }
 
   const effect = resultShown ? playbackEffectText({ ...step, teamAIdx: game.teamAIdx, teamBIdx: game.teamBIdx }, game) : { text: '', tone: '' };
-  effectEl.textContent = effect.text;
+  const guess = battlePlayback.guess;
+  if (resultShown && guess) {
+    const milestone = guess.correct && [3, 5, 10, 15, 20].includes(guess.streak) ? ` 🔥 ${guess.streak} in a row!` : '';
+    effectEl.innerHTML = `<span class="bp-guess ${guess.correct ? 'hit' : 'miss'}">${guess.correct ? '🎯 Called it!' : '✗ Missed'}${milestone}</span>${effect.text ? ` ${effect.text}` : ''}`;
+  } else {
+    effectEl.textContent = effect.text;
+  }
   effectEl.className = `battle-playback-effect${effect.tone ? ` ${effect.tone}` : ''}`;
-  textEl.textContent = resultShown
-    ? step.reason
-    : battlePlayback.phase === 'clash' ? '…' : `${step.pokemonANameDisplay} vs ${step.pokemonBNameDisplay}`;
+  if (battlePlayback.phase === 'predict') {
+    textEl.innerHTML = `
+      <div class="bp-predict">
+        <span>Who wins this skirmish?</span>
+        <button type="button" onclick="predictSkirmish('A')" style="--team:${teamA.color}">1 · ${step.pokemonANameDisplay}</button>
+        <button type="button" onclick="predictSkirmish('B')" style="--team:${teamB.color}">2 · ${step.pokemonBNameDisplay}</button>
+      </div>`;
+  } else {
+    textEl.textContent = resultShown
+      ? step.reason
+      : battlePlayback.phase === 'clash' ? '…' : `${step.pokemonANameDisplay} vs ${step.pokemonBNameDisplay}`;
+  }
   renderBattleControls();
 }
 
@@ -5274,6 +5375,7 @@ function renderMatch(animateHp = false) {
       <div class="mp-how">You'll choose a fighter for each skirmish from your six — each Pokémon fights once. ${!A.isCpu && !B.isCpu
         ? 'Teams take turns choosing first; the second team sees the first pick.'
         : 'Turns alternate: in odd skirmishes the CPU reveals its fighter first; in even ones you commit first and it counter-picks.'}</div>
+      ${!Number.isInteger(game.week) ? `<div class="mp-how"><button type="button" class="mp-lineup-link" onclick="openSeriesPreview('${game.id}')">📋 Series preview: tale of the tape</button></div>` : ''}
       <div class="mp-actions">
         <button class="dc-cancel" onclick="autoSimMatch()">Auto-sim this game</button>
         <button class="dc-confirm" onclick="startMatch()">Start match ▶</button>
@@ -5493,6 +5595,179 @@ function renderLineupModal() {
   `;
 }
 
+// ── Playoff series preview: tale of the tape ──
+function openSeriesPreview(gameId) {
+  const game = getCurrentPlayoffGames().find(g => g.id === gameId);
+  if (!game || !isPlayoffGameReady(game)) return;
+  const schedule = getCurrentDraftSchedule();
+  const standings = buildRegularSeasonStandings(schedule);
+  const score = matchupScore(teams[game.teamAIdx], teams[game.teamBIdx]);
+  const allGames = [...schedule, ...getCurrentPlayoffGames()].filter(g => g.simulated);
+  const h2h = schedule.filter(g => g.simulated &&
+    ((g.teamAIdx === game.teamAIdx && g.teamBIdx === game.teamBIdx) || (g.teamAIdx === game.teamBIdx && g.teamBIdx === game.teamAIdx)));
+  const side = (idx, chance) => {
+    const team = teams[idx];
+    const st = standings.find(s => s.teamIdx === idx);
+    const roster = getActiveRoster(team);
+    const star = skirmishLeaders(allGames).find(l => l.teamIdx === idx);
+    const ace = [...roster].sort((a, b) => pokemonPower(b) - pokemonPower(a))[0];
+    return { team, idx, st, roster, star, ace, chance, weak: matchTeamWeakTypes(roster), form: teamResults(idx, schedule).slice(-3).join('') };
+  };
+  const A = side(game.teamAIdx, score.chanceA);
+  const B = side(game.teamBIdx, score.chanceB);
+  const edge = score.matchup.typeEdgeA;
+  const edgeText = Math.abs(edge) < 0.15 ? 'Even type matchup' : `${(edge > 0 ? A : B).team.name} have the type edge`;
+  const h2hText = h2h.length
+    ? h2h.map(g => `${teams[g.winnerIdx].name} won ${Math.max(g.scoreA, g.scoreB)}–${Math.min(g.scoreA, g.scoreB)} (Week ${g.week})`).join(' · ')
+    : 'First meeting this season';
+  const row = (label, a, b, better = null) => `
+    <div class="sp-row"><span class="${better === 'A' ? 'lead' : ''}">${a}</span><em>${label}</em><span class="${better === 'B' ? 'lead' : ''}">${b}</span></div>`;
+  const cmp = (a, b, higher = true) => (a === b ? null : (a > b) === higher ? 'A' : 'B');
+  const pill = t => `<span class="type-pill" style="background:${TYPE_COLORS[t]};color:${isLight(TYPE_COLORS[t]) ? '#000' : '#fff'}">${t}</span>`;
+  const head = s => `
+    <div class="sp-team" style="--team:${s.team.color}">
+      <div class="sp-seed">#${playoffSeedFor(s.idx) ?? '?'} seed</div>
+      <div class="sp-name">${s.team.name}${youTagHtml(s.idx)}</div>
+      <div class="mp-roster">${s.roster.map(p => `<img src="${p.sprite || pokemonSpriteUrl(p.id)}" alt="${p.name}" title="${pokemonDisplayName(p)}" onerror="this.style.visibility='hidden'">`).join('')}</div>
+      <div class="sp-odds">${Math.round(s.chance * 100)}%</div>
+    </div>`;
+  document.getElementById('seriesPreviewModal').innerHTML = `
+    <div class="lu-head">
+      <div><div class="dc-kicker">${game.label} preview · tale of the tape</div><div class="lu-title" id="seriesPreviewTitle">${A.team.name} vs ${B.team.name}</div></div>
+      <button class="bps-close" onclick="closeSeriesPreview()" aria-label="Close">✕</button>
+    </div>
+    <div class="sp-heads">${head(A)}<div class="mp-vs">VS</div>${head(B)}</div>
+    <div class="sp-odds-bar"><b style="width:${Math.round(A.chance * 100)}%;background:${A.team.color}"></b><b style="width:${Math.round(B.chance * 100)}%;background:${B.team.color}"></b></div>
+    <div class="sp-table">
+      ${row('Record', `${A.st?.wins ?? 0}-${A.st?.losses ?? 0}`, `${B.st?.wins ?? 0}-${B.st?.losses ?? 0}`, cmp(A.st?.wins ?? 0, B.st?.wins ?? 0))}
+      ${row('Set diff', `${(A.st?.pointDiff ?? 0) > 0 ? '+' : ''}${A.st?.pointDiff ?? 0}`, `${(B.st?.pointDiff ?? 0) > 0 ? '+' : ''}${B.st?.pointDiff ?? 0}`, cmp(A.st?.pointDiff ?? 0, B.st?.pointDiff ?? 0))}
+      ${row('Rating', A.st?.rating ?? '—', B.st?.rating ?? '—', cmp(A.st?.rating ?? 0, B.st?.rating ?? 0))}
+      ${row('Last 3', A.form || '—', B.form || '—')}
+      ${row('Top performer', A.star ? `${pokemonDisplayName({ name: A.star.name })} (${A.star.wins}W)` : '—', B.star ? `${pokemonDisplayName({ name: B.star.name })} (${B.star.wins}W)` : '—')}
+      ${row('Ace (BST)', A.ace ? `${pokemonDisplayName(A.ace)} ${A.ace.bst}` : '—', B.ace ? `${pokemonDisplayName(B.ace)} ${B.ace.bst}` : '—')}
+      ${row('Weak to', A.weak.map(pill).join(' ') || '—', B.weak.map(pill).join(' ') || '—')}
+    </div>
+    <div class="sp-notes"><div>⚔ Head-to-head: ${h2hText}</div><div>🧬 ${edgeText}</div></div>
+    <div class="dc-actions"><button class="dc-confirm" onclick="closeSeriesPreview()">Got it</button></div>
+  `;
+  document.getElementById('seriesPreviewOverlay').classList.add('visible');
+}
+
+function closeSeriesPreview() {
+  document.getElementById('seriesPreviewOverlay')?.classList.remove('visible');
+}
+
+// ── Awards night ──
+let awardsView = null;   // { list, idx, onDone }
+
+// Worked out once per generation, after the Final.
+function computeAwards() {
+  const activeSeason = ensureSeason();
+  activeSeason.awards ??= {};
+  if (activeSeason.awards[draftNumber]) return activeSeason.awards[draftNumber];
+  const games = [...getCurrentDraftSchedule(), ...getCurrentPlayoffGames()].filter(g => g.simulated);
+  if (!games.length) return [];
+  const leaders = skirmishLeaders(games);
+  const winsOf = id => leaders.find(l => l.id === id)?.wins ?? 0;
+  const pokeRef = (id, name, teamIdx) => ({ id, name: pokemonDisplayName(bpPokemon(id) ?? { name }), teamIdx });
+  const awards = [];
+
+  const mvp = leaders[0];
+  if (mvp) awards.push({ key: 'mvp', icon: '👑', title: 'Most Valuable Pokémon', ...pokeRef(mvp.id, mvp.name, mvp.teamIdx),
+    line: `${mvp.wins} skirmish wins, the most in the league` });
+
+  const log = currentDraftPickLog();
+  const steal = log.filter(e => Number.isInteger(e.rank) && e.pickNo > e.rank)
+    .map(e => ({ e, value: e.pickNo - e.rank, wins: winsOf(e.pokeId) }))
+    .sort((a, b) => (b.wins * 3 + b.value) - (a.wins * 3 + a.value))[0];
+  if (steal) {
+    const poke = bpPokemon(steal.e.pokeId);
+    awards.push({ key: 'steal', icon: '💎', title: 'Best Draft Pick', ...pokeRef(steal.e.pokeId, poke?.name ?? '?', steal.e.teamIdx),
+      line: `Taken at pick #${steal.e.pickNo} (board #${steal.e.rank}) · ${steal.wins} skirmish win${steal.wins === 1 ? '' : 's'}` });
+  }
+
+  const upset = games.filter(g => winnerChanceOf(g) !== null && winnerChanceOf(g) < 0.5)
+    .sort((a, b) => winnerChanceOf(a) - winnerChanceOf(b))[0];
+  if (upset) {
+    const loser = upset.winnerIdx === upset.teamAIdx ? upset.teamBIdx : upset.teamAIdx;
+    awards.push({ key: 'upset', icon: '🚨', title: 'Upset of the Year', teamIdx: upset.winnerIdx, name: teams[upset.winnerIdx].name,
+      line: `Beat ${teams[loser].name} ${Math.max(upset.scoreA, upset.scoreB)}–${Math.min(upset.scoreA, upset.scoreB)} with ${Math.round(winnerChanceOf(upset) * 100)}% odds${Number.isInteger(upset.week) ? ` (Week ${upset.week})` : ` (${upset.label})`}`,
+      gameId: upset.id, scope: Number.isInteger(upset.week) ? 'season' : 'playoff' });
+  }
+
+  const breakout = log.filter(e => e.pickNo > numTeams)
+    .map(e => ({ e, wins: winsOf(e.pokeId) }))
+    .filter(x => x.wins > 0)
+    .sort((a, b) => b.wins - a.wins || b.e.pickNo - a.e.pickNo)[0];
+  if (breakout) {
+    const poke = bpPokemon(breakout.e.pokeId);
+    awards.push({ key: 'breakout', icon: '🚀', title: 'Breakout Pokémon', ...pokeRef(breakout.e.pokeId, poke?.name ?? '?', breakout.e.teamIdx),
+      line: `Drafted at pick #${breakout.e.pickNo}, finished with ${breakout.wins} skirmish wins` });
+  }
+
+  // Coach of the year: biggest climb from post-draft projection to final finish.
+  const grades = activeSeason.draftGrades?.[draftNumber] ?? [];
+  const finish = isPlayoffsComplete() ? [...computePlayoffDraftOrder()].reverse() : buildRegularSeasonStandings(getCurrentDraftSchedule()).map(s => s.teamIdx);
+  if (grades.length && finish.length) {
+    const projected = [...grades].sort((a, b) => b.score - a.score).map(g => g.teamIdx);
+    const best = teams.map((_, idx) => ({ idx, climb: projected.indexOf(idx) - finish.indexOf(idx) }))
+      .filter(x => x.climb > 0)
+      .sort((a, b) => b.climb - a.climb || finish.indexOf(a.idx) - finish.indexOf(b.idx))[0];
+    if (best) awards.push({ key: 'coach', icon: '📋', title: 'Coach of the Year', teamIdx: best.idx, name: teams[best.idx].name,
+      line: `Projected #${projected.indexOf(best.idx) + 1} after the draft, finished #${finish.indexOf(best.idx) + 1}` });
+  }
+
+  activeSeason.awards[draftNumber] = awards;
+  return awards;
+}
+
+function openAwardsNight(onDone = null) {
+  const list = computeAwards();
+  if (!list.length) { onDone?.(); return; }
+  awardsView = { list, idx: 0, onDone };
+  saveSeason(buildSeasonState());
+  document.getElementById('awardsOverlay').classList.add('visible');
+  renderAwards();
+}
+
+function nextAward() {
+  if (!awardsView) return;
+  if (awardsView.idx < awardsView.list.length - 1) { awardsView.idx++; renderAwards(); return; }
+  closeAwardsNight();
+}
+
+function closeAwardsNight() {
+  const done = awardsView?.onDone;
+  awardsView = null;
+  document.getElementById('awardsOverlay')?.classList.remove('visible');
+  done?.();
+}
+
+function renderAwards() {
+  const card = document.getElementById('awardsCard');
+  if (!card || !awardsView) return;
+  const { list, idx } = awardsView;
+  const award = list[idx];
+  const team = teams[award.teamIdx];
+  const last = idx === list.length - 1;
+  card.innerHTML = `
+    <div class="aw-kicker">${GENS[currentGenIdx].label} · Awards night · ${idx + 1} of ${list.length}</div>
+    <div class="aw-icon">${award.icon}</div>
+    <div class="aw-title" id="awardsTitle">${award.title}</div>
+    ${Number.isInteger(award.id) ? `<img class="aw-sprite" src="${bpPokemon(award.id)?.sprite || pokemonSpriteUrl(award.id)}" alt="" onerror="this.style.visibility='hidden'">` : ''}
+    <div class="aw-winner" style="color:${team?.color ?? 'var(--text)'}">${award.name}</div>
+    ${Number.isInteger(award.id) && team ? `<div class="aw-team"><span class="battle-team-dot" style="background:${team.color}"></span>${team.name}${youTagHtml(award.teamIdx)}</div>` : youTagHtml(award.teamIdx)}
+    <div class="aw-line">${award.line}</div>
+    ${award.gameId ? `<button type="button" class="aw-replay" onclick="openBattlePlayback('${award.scope}', '${award.gameId}')">▶ Watch the upset</button>` : ''}
+    <div class="aw-dots">${list.map((_, i) => `<i class="${i === idx ? 'on' : i < idx ? 'done' : ''}"></i>`).join('')}</div>
+    <div class="aw-actions">
+      ${last ? '' : '<button class="champ-btn secondary" onclick="closeAwardsNight()">Skip</button>'}
+      <button class="champ-btn primary" id="awardsNext" onclick="nextAward()">${last ? (awardsView.onDone ? 'Continue →' : 'Close') : 'Next award ▶'}</button>
+    </div>
+  `;
+  document.getElementById('awardsNext')?.focus();
+}
+
 // ── Regular Season ──
 function showSeasonScreen() {
   document.getElementById('draftScreen').style.display = 'none';
@@ -5574,7 +5849,7 @@ function renderSeasonScreen() {
     <div class="season-standing-row${entry.teamIdx === youIdx ? ' is-you' : ''}">
       <div class="season-rank">${entry.seed}</div>
       <div class="season-team-dot" style="background:${entry.color}"></div>
-      <div class="season-team-name">${entry.name} ${youTagHtml(entry.teamIdx)}${cpuBadgeHtml(entry, 'season-cpu-personality', { compact: true })}</div>
+      <div class="season-team-name">${entry.name} ${youTagHtml(entry.teamIdx)}${teamFormIcon(entry.teamIdx)}${cpuBadgeHtml(entry, 'season-cpu-personality', { compact: true })}</div>
       <div class="season-record">${entry.wins}-${entry.losses}</div>
       <div class="season-stat" title="Sets won">${entry.pointsFor}</div>
       <div class="season-stat" title="Set difference">${entry.pointDiff > 0 ? '+' : ''}${entry.pointDiff}</div>
@@ -5634,6 +5909,7 @@ function renderSeasonScreen() {
   }).join('');
   renderBattleLogPanel('seasonBattleLog', selectedLogGame, 'season');
   renderSeasonNextGame(schedule, standings, nextWeek, complete);
+  renderLeagueNews('seasonNews');
   renderSeasonLeaders(schedule);
 
   document.getElementById('seasonBottomStatus').textContent = complete
@@ -5720,8 +5996,138 @@ function renderSeasonLeaders(schedule) {
   `;
 }
 
+// ── League news & form ──
+function winnerChanceOf(game) {
+  const c = game.winnerIdx === game.teamAIdx ? game.matchupScore?.chanceA : game.matchupScore?.chanceB;
+  return Number.isFinite(c) ? c : null;
+}
+
+function skirmishLeaders(games) {
+  const tally = new Map();
+  games.forEach(game => (game.sets ?? []).forEach(set => {
+    const entry = tally.get(set.winnerPokemonId) ?? { id: set.winnerPokemonId, name: set.winnerPokemonName, teamIdx: set.winnerIdx, wins: 0 };
+    entry.wins++;
+    tally.set(set.winnerPokemonId, entry);
+  }));
+  return [...tally.values()].sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name));
+}
+
+// Results for a team's regular-season games in week order, e.g. ['W','W','L'].
+function teamResults(teamIdx, schedule = getCurrentDraftSchedule()) {
+  return schedule
+    .filter(game => game.simulated && (game.teamAIdx === teamIdx || game.teamBIdx === teamIdx))
+    .sort((a, b) => a.week - b.week)
+    .map(game => (game.winnerIdx === teamIdx ? 'W' : 'L'));
+}
+
+function currentStreak(results) {
+  if (!results.length) return { kind: null, n: 0 };
+  const kind = results[results.length - 1];
+  let n = 0;
+  for (let i = results.length - 1; i >= 0 && results[i] === kind; i--) n++;
+  return { kind, n };
+}
+
+function teamFormIcon(teamIdx) {
+  const { kind, n } = currentStreak(teamResults(teamIdx));
+  if (n >= 3 && kind === 'W') return `<span class="form-icon" title="Won ${n} straight">🔥</span>`;
+  if (n >= 3 && kind === 'L') return `<span class="form-icon" title="Lost ${n} straight">🧊</span>`;
+  return '';
+}
+
+function headlinesFor(games, { schedule = null, priorGames = [], playoff = false } = {}) {
+  const items = [];
+  const name = idx => teams[idx]?.name ?? '?';
+  const loserOf = game => (game.winnerIdx === game.teamAIdx ? game.teamBIdx : game.teamAIdx);
+  const score = game => `${Math.max(game.scoreA, game.scoreB)}–${Math.min(game.scoreA, game.scoreB)}`;
+  const youIdx = soleHumanTeamIdx();
+
+  const upset = games.filter(g => winnerChanceOf(g) !== null && winnerChanceOf(g) < 0.35)
+    .sort((a, b) => winnerChanceOf(a) - winnerChanceOf(b))[0];
+  if (upset) items.push({ icon: '🚨', kind: 'upset', text: `Upset! ${name(upset.winnerIdx)} stun ${name(loserOf(upset))} ${score(upset)} at ${Math.round(winnerChanceOf(upset) * 100)}% odds` });
+
+  const mine = youIdx !== null ? games.find(g => g.teamAIdx === youIdx || g.teamBIdx === youIdx) : null;
+  if (mine && mine !== upset) {
+    const won = mine.winnerIdx === youIdx;
+    items.push({ icon: won ? '✅' : '❌', kind: 'you', text: `${name(youIdx)} ${won ? 'beat' : 'fall to'} ${name(won ? loserOf(mine) : mine.winnerIdx)} ${score(mine)}` });
+  }
+
+  if (playoff) {
+    games.filter(g => g !== upset && g !== mine).forEach(g => {
+      items.push(g.label === 'Final'
+        ? { icon: '🏆', kind: 'title', text: `${name(g.winnerIdx)} win the ${GENS[g.genIdx ?? currentGenIdx].label} title, ${score(g)} over ${name(loserOf(g))}` }
+        : { icon: '➡', kind: 'advance', text: `${name(g.winnerIdx)} advance past ${name(loserOf(g))} ${score(g)}` });
+    });
+  } else {
+    games.filter(g => g !== upset && g !== mine && Math.min(g.scoreA, g.scoreB) === 0)
+      .slice(0, 2)
+      .forEach(g => items.push({ icon: '🧹', kind: 'sweep', text: `${name(g.winnerIdx)} sweep ${name(loserOf(g))} 3–0` }));
+  }
+
+  const potw = skirmishLeaders(games)[0];
+  if (potw && potw.wins >= 2) items.push({ icon: '⭐', kind: 'potw', text: `${playoff ? 'Playoff star' : 'Player of the Week'}: ${pokemonDisplayName({ name: potw.name })} (${name(potw.teamIdx)}) — ${potw.wins} skirmish wins` });
+
+  if (schedule) {
+    teams.forEach((team, idx) => {
+      const results = teamResults(idx, schedule);
+      const { kind, n } = currentStreak(results);
+      if (n >= 3 && kind === 'W') items.push({ icon: '🔥', kind: 'streak', text: `${team.name} have won ${n} straight` });
+      else if (n >= 3 && kind === 'L') items.push({ icon: '🧊', kind: 'streak', text: `${team.name} have dropped ${n} in a row` });
+      else if (results.length >= 3 && kind === 'L' && n === 1 && results.slice(0, -1).every(r => r === 'W')) {
+        items.push({ icon: '💥', kind: 'streak', text: `${team.name} suffer their first loss of the season` });
+      }
+    });
+    const before = skirmishLeaders(priorGames)[0];
+    const after = skirmishLeaders([...priorGames, ...games])[0];
+    if (after && after.wins >= 3 && (!before || before.id !== after.id)) {
+      items.push({ icon: '👑', kind: 'mvp', text: `${pokemonDisplayName({ name: after.name })} takes the MVP lead with ${after.wins} wins` });
+    }
+  }
+  return items.slice(0, 6);
+}
+
+// Generate headlines once for each fully played week / playoff round.
+function updateLeagueNews() {
+  const activeSeason = ensureSeason();
+  activeSeason.news ??= [];
+  activeSeason.newsKeys ??= [];
+  const schedule = getCurrentDraftSchedule();
+  const weeks = [...new Set(schedule.map(g => g.week))].sort((a, b) => a - b);
+  weeks.forEach(week => {
+    const key = `${draftNumber}-w${week}`;
+    const games = schedule.filter(g => g.week === week);
+    if (activeSeason.newsKeys.includes(key) || !games.every(g => g.simulated)) return;
+    const upTo = schedule.filter(g => g.week <= week);
+    const items = headlinesFor(games, { schedule: upTo, priorGames: schedule.filter(g => g.week < week) });
+    activeSeason.news.push({ key, draftId: draftNumber, label: `Week ${week}`, items });
+    activeSeason.newsKeys.push(key);
+  });
+  const playoffs = getCurrentPlayoffGames();
+  [...new Set(playoffs.map(g => g.round))].sort((a, b) => a - b).forEach(round => {
+    const key = `${draftNumber}-p${round}`;
+    const games = playoffs.filter(g => g.round === round);
+    if (activeSeason.newsKeys.includes(key) || !games.every(g => g.simulated)) return;
+    activeSeason.news.push({ key, draftId: draftNumber, label: games[0]?.label === 'Final' ? 'Final' : `Playoffs R${round}`, items: headlinesFor(games, { playoff: true }) });
+    activeSeason.newsKeys.push(key);
+  });
+}
+
+function renderLeagueNews(containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const entries = (season?.news ?? []).filter(n => n.draftId === draftNumber).slice().reverse();
+  const rows = entries.flatMap(entry => entry.items.map(item => ({ ...item, label: entry.label }))).slice(0, 8);
+  el.innerHTML = `
+    <div class="season-section-lbl">League News</div>
+    ${rows.length ? `<div class="ln-list">${rows.map(item => `
+      <div class="ln-row ${item.kind}"><span class="ln-icon">${item.icon}</span><span class="ln-text">${item.text}</span><span class="ln-when">${item.label}</span></div>`).join('')}</div>`
+      : '<div class="sl-empty">Headlines appear here after each week.</div>'}
+  `;
+}
+
 function finishSeasonWeek() {
   syncRegularSeasonResults();
+  updateLeagueNews();
   renderSeasonScreen();
   saveSeason(buildSeasonState(SEASON_PHASES.REGULAR_SEASON, 'complete'));
 }
@@ -5748,6 +6154,7 @@ function simulateNextWeek() {
 function simulateAllSeason() {
   getCurrentDraftSchedule().forEach(simulateGame);
   syncRegularSeasonResults();
+  updateLeagueNews();
   renderSeasonScreen();
   saveSeason(buildSeasonState(SEASON_PHASES.REGULAR_SEASON, 'complete'));
 }
@@ -5817,7 +6224,7 @@ function renderPlayoffScreen() {
           const selected = selectedLogGame?.id === game.id ? ' selected' : '';
           return `
             <div class="playoff-game${game.simulated ? ' simulated' : ''}${selected}"${clickable}>
-              <div class="playoff-game-label">${game.label} ${upsetTagHtml(game)}</div>
+              <div class="playoff-game-label">${game.label} ${upsetTagHtml(game)}${!game.simulated && isPlayoffGameReady(game) ? `<button type="button" class="pg-preview" onclick="event.stopPropagation(); openSeriesPreview('${game.id}')">Preview</button>` : ''}</div>
               <div class="playoff-team${winnerA ? ' winner' : ''}">
                 <span class="playoff-seed-num">${seedA ? seedA : '-'}</span>
                 <span class="playoff-team-dot" style="background:${Number.isInteger(game.teamAIdx) ? teams[game.teamAIdx].color : 'var(--border)'}"></span>
@@ -5850,6 +6257,7 @@ function renderPlayoffScreen() {
     ? `<div class="playoff-champ-label">Champion</div><div class="playoff-champ-name">${teams[championIdx].name}</div>`
     : '<div class="playoff-champ-label">Champion</div><div class="playoff-champ-name">TBD</div>';
   renderBattleLogPanel('playoffBattleLog', selectedLogGame, 'playoff');
+  renderLeagueNews('playoffNews');
 
   document.getElementById('btnSimPlayoffRound').disabled = complete || nextRound === null;
   document.getElementById('btnSimPlayoffsAll').disabled = complete || nextRound === null;
@@ -5870,6 +6278,7 @@ function simulateNextPlayoffRound() {
   const finishRound = () => {
     resolvePlayoffSources();
     syncPlayoffResults();
+    updateLeagueNews();
     renderPlayoffScreen();
     saveSeason(buildSeasonState(SEASON_PHASES.PLAYOFFS, 'complete'));
     if (!wasComplete && isPlayoffsComplete()) crownChampion();
@@ -5894,6 +6303,7 @@ function simulateAllPlayoffs() {
   }
 
   syncPlayoffResults();
+  updateLeagueNews();
   renderPlayoffScreen();
   saveSeason(buildSeasonState(SEASON_PHASES.PLAYOFFS, 'complete'));
   if (!wasComplete && isPlayoffsComplete()) crownChampion();
@@ -5982,7 +6392,7 @@ function crownChampion() {
     <div class="champ-hof-note">Added to the Hall of Fame</div>
     <div class="champ-actions">
       <button class="champ-btn secondary" onclick="closeChampionCelebration()">View Bracket</button>
-      <button class="champ-btn primary" onclick="closeChampionCelebration(); continueAfterPlayoffs()">Continue →</button>
+      <button class="champ-btn primary" onclick="closeChampionCelebration(); openAwardsNight(continueAfterPlayoffs)">Awards night →</button>
     </div>
   `;
   document.getElementById('champOverlay').classList.add('visible');
@@ -6352,6 +6762,8 @@ function flashRosterTab() {
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (awardsView && document.getElementById('battlePlaybackOverlay')?.style.display !== 'flex') { closeAwardsNight(); return; }
+  if (document.getElementById('seriesPreviewOverlay')?.classList.contains('visible')) { closeSeriesPreview(); return; }
   if (lineupDraft) { closeLineupModal(); return; }
   if (document.getElementById('simDraftOverlay')?.classList.contains('visible')) { closeSimDraftConfirm(); return; }
   if (faClaimState) { closeFaClaim(); return; }
