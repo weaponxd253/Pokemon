@@ -349,29 +349,22 @@
 
 <!-- ══════════════ BATTLE PLAYBACK ══════════════ -->
 <div id="battlePlaybackOverlay">
-  <div class="battle-playback">
-    <div class="battle-playback-top">
-      <div>
-        <div class="battle-playback-title" id="battlePlaybackTitle">Battle Playback</div>
-        <div class="battle-playback-sub" id="battlePlaybackSub">Skirmish replay</div>
-      </div>
-      <button class="btn-battle-close" onclick="closeBattlePlayback()">Close</button>
-    </div>
-
-    <div class="battle-stage">
-      <div class="battle-side" id="battleSideA"></div>
-      <div class="battle-versus">VS</div>
-      <div class="battle-side" id="battleSideB"></div>
-    </div>
-
+  <div class="battle-playback" role="dialog" aria-modal="true" aria-labelledby="battlePlaybackTitle">
+    <div class="bp-scoreboard" id="bpScoreboard"></div>
+    <div class="bp-stage" id="bpStage"></div>
+    <div class="bp-why" id="bpWhy"></div>
     <div class="battle-playback-effect" id="battlePlaybackEffect"></div>
-    <div class="battle-playback-text" id="battlePlaybackText"></div>
-    <div class="battle-playback-score" id="battlePlaybackScore"></div>
+    <div class="battle-playback-text" id="battlePlaybackText" aria-live="polite"></div>
 
     <div class="battle-playback-controls">
-      <button class="btn-battle-control" id="btnBattlePrev" onclick="prevBattleStep()">Prev</button>
-      <button class="btn-battle-control primary" id="btnBattleAuto" onclick="toggleBattleAutoplay()">Auto Play</button>
-      <button class="btn-battle-control" id="btnBattleNext" onclick="nextBattleStep()">Next</button>
+      <button class="btn-battle-control" id="btnBattlePrev" onclick="prevBattleStep()" title="Previous skirmish (←)">◀ Prev</button>
+      <button class="btn-battle-control primary" id="btnBattleAuto" onclick="toggleBattleAutoplay()" title="Play / pause (Space)">Auto Play</button>
+      <div class="bp-speed" role="group" aria-label="Playback speed">
+        <button type="button" data-speed="1" onclick="setBattleSpeed(1)">1×</button>
+        <button type="button" data-speed="2" onclick="setBattleSpeed(2)">2×</button>
+      </div>
+      <button class="btn-battle-control" id="btnBattleSkip" onclick="skipBattleToResult()" title="Jump to the final result">Skip to result</button>
+      <button class="btn-battle-control" id="btnBattleNext" onclick="nextBattleStep()" title="Next (→)">Next ▶</button>
     </div>
   </div>
 </div>
