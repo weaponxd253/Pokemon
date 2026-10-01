@@ -2508,6 +2508,17 @@ body.has-phase-tracker #completeScreen { min-height: calc(100vh - var(--tracker-
 .btn-pick-for-me:hover:not(:disabled) { filter: brightness(1.08); }
 .btn-pick-for-me:disabled { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); cursor: not-allowed; }
 
+.btn-sim-draft {
+  flex-shrink: 0; padding: 0 14px; min-height: 36px; border-radius: 6px; cursor: pointer;
+  background: transparent; color: var(--text); border: 1px solid var(--border);
+  font-family: 'Rajdhani', sans-serif; font-size: 14px; font-weight: 700; white-space: nowrap;
+}
+.btn-sim-draft:hover:not(:disabled) { border-color: var(--yellow); color: var(--yellow); }
+.btn-sim-draft:disabled { opacity: 0.5; cursor: not-allowed; }
+.sdc-title { text-transform: none; white-space: normal; }
+.sdc-list { margin: 12px 0 4px 18px; display: grid; gap: 6px; font-size: 14px; color: var(--muted); line-height: 1.4; }
+.sdc-list strong { color: var(--text); }
+
 /* Wish-list star on cards */
 .pc-star {
   position: absolute; top: 5px; left: 6px; z-index: 1;
@@ -3039,7 +3050,9 @@ details.season-week.next .sw-upcoming { color: var(--yellow); font-weight: 700; 
   .pt-speed span { display: none; }
   .pt-speed select { font-size: 12px; padding: 2px 4px; }
   .pt-gen { margin-left: 0; }
-  .btn-pick-for-me { flex-basis: 100%; min-height: 40px; }
+  .panel-toolbar .tb-select { flex: 1 1 calc(50% - 6px); }
+  .btn-pick-for-me { flex: 1 1 55%; min-height: 40px; }
+  .btn-sim-draft { flex: 1 1 38%; min-height: 40px; }
 
   /* ── Fun layer on phones ── */
   .pa-card { padding: 18px 16px; }
