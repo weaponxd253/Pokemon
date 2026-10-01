@@ -129,6 +129,7 @@ let selectedDraftId = null;   // card picked but not yet confirmed
 let lastHumanPick = null;     // { teamIdx, pokeId } — enables a one-step undo
 let undoToastTimer = null;
 let cpuPickTimer = null;
+let simulatingDraft = false;   // true while "Sim rest of draft" makes picks in bulk
 // CPU pacing: [base ms, random extra ms] per action, plus how long Undo stays open.
 const CPU_SPEEDS = {
   normal:  { label: 'Normal',  draft: [800, 800], freeAgency: [650, 650], undo: 5000 },
@@ -2632,22 +2633,23 @@ function cpuFreeAgentPick() {
   }
 }
 
-function cpuPick() {
-  cpuPickTimer = null;
-  const team = teams[currentTeamIdx()];
+function cpuDraftChoice(team) {
   const available = availablePokemon();
-  if (!team || !available.length) return;
-
+  if (!team || !available.length) return null;
   if (team.isCpu && !isValidCpuPersonality(team.cpuPersonality)) {
     normalizeCpuPersonalities(teams);
   }
   const config = cpuPersonalityConfig(team);
-
   const scored = available
     .map(p => ({ poke: p, ...cpuDraftScore(p, team) }))
     .sort((a, b) => b.score - a.score || b.poke.bst - a.poke.bst || a.poke.id - b.poke.id);
+  return (chooseCpuDraftEntry(scored, config) ?? scored[0]).poke;
+}
 
-  const choice = (chooseCpuDraftEntry(scored, config) ?? scored[0]).poke;
+function cpuPick() {
+  cpuPickTimer = null;
+  const choice = cpuDraftChoice(teams[currentTeamIdx()]);
+  if (!choice) return;
   setCpuThinking(false);
   draftPokemon(choice);
 }
@@ -3105,7 +3107,88 @@ function pickForMe() {
   draftPokemon(choice);
 }
 
+// ── Sim rest of draft ──
+function remainingDraftPicks() {
+  return Math.max(0, numRounds * numTeams - currentPickNum());
+}
+
+function openSimDraftConfirm() {
+  if (currentRound >= numRounds) return;
+  const remaining = snakeOrder.slice(currentPickNum());
+  const humanPicks = remaining.filter(idx => !teams[idx]?.isCpu).length;
+  const humans = [...new Set(remaining.filter(idx => !teams[idx]?.isCpu))].map(idx => teams[idx]);
+  const wishCount = humans.reduce((sum, team) => sum + availableWishlist(team).length, 0);
+  document.getElementById('simDraftModal').innerHTML = `
+    <div class="dc-kicker">Sim rest of draft</div>
+    <div class="dc-name sdc-title" id="simDraftTitle">Finish the draft now?</div>
+    <ul class="sdc-list">
+      <li><strong>${remainingDraftPicks()}</strong> picks left${humanPicks ? ` · <strong>${humanPicks}</strong> for ${humans.map(t => t.name).join(', ')}` : ''}</li>
+      ${humanPicks ? `<li>Human picks use the wish list first${wishCount ? ` (${wishCount} starred)` : ''}, then the best fit — the same as “Pick for me”.</li>` : ''}
+      <li>CPU teams pick exactly as they would normally.</li>
+      <li>You'll land on the roster screen with draft grades, and can still set your lineup and use free agency.</li>
+    </ul>
+    <div class="dc-actions">
+      <button class="dc-cancel" onclick="closeSimDraftConfirm()">Keep drafting</button>
+      <button class="dc-confirm" id="simDraftConfirm" onclick="simRestOfDraft()">⏩ Sim ${remainingDraftPicks()} picks</button>
+    </div>
+  `;
+  document.getElementById('simDraftOverlay').classList.add('visible');
+  document.getElementById('simDraftConfirm')?.focus();
+}
+
+function closeSimDraftConfirm() {
+  document.getElementById('simDraftOverlay')?.classList.remove('visible');
+}
+
+function simRestOfDraft() {
+  closeSimDraftConfirm();
+  if (currentRound >= numRounds) return;
+  clearTimeout(cpuPickTimer);
+  cpuPickTimer = null;
+  cpuThinking = false;
+  selectedDraftId = null;
+  renderDraftConfirm();
+  clearUndoToast();
+  hidePickAnnouncement();
+  document.getElementById('dhPicker')?.classList.remove('thinking');
+
+  const made = remainingDraftPicks();
+  simulatingDraft = true;
+  try {
+    let guard = made + 1;
+    while (currentRound < numRounds && guard-- > 0) {
+      const team = teams[currentTeamIdx()];
+      const choice = team.isCpu ? cpuDraftChoice(team) : pickForMeChoice(team);
+      if (!choice) break;
+      draftPokemon(choice);   // the final pick opens the roster screen
+    }
+  } finally {
+    simulatingDraft = false;
+  }
+  if (currentRound < numRounds) {
+    // Ran out of Pokémon (shouldn't happen); show where we stopped.
+    refreshHeader(); refreshSnakeBar(); refreshGrid(); refreshTeams();
+    saveSeason(buildSeasonState(SEASON_PHASES.DRAFT, 'inProgress'));
+    return;
+  }
+  const toast = document.getElementById('draftToast');
+  if (toast) {
+    toast.innerHTML = `<span class="dt-text">⏩ Draft simulated — <strong>${made}</strong> picks made</span><span class="dt-timer" style="animation-duration:2600ms"></span>`;
+    toast.classList.add('cpu');
+    toast.classList.remove('visible');
+    void toast.offsetWidth;
+    toast.classList.add('visible');
+    clearTimeout(undoToastTimer);
+    undoToastTimer = setTimeout(clearUndoToast, 2600);
+  }
+}
+
 function refreshPickForMeButton() {
+  const simBtn = document.getElementById('btnSimDraft');
+  if (simBtn) {
+    simBtn.disabled = currentRound >= numRounds;
+    simBtn.title = `Finish all ${remainingDraftPicks()} remaining picks now`;
+  }
   const btn = document.getElementById('btnPickForMe');
   if (!btn) return;
   const team = teams[currentTeamIdx()];
@@ -3236,9 +3319,9 @@ function draftPokemon(poke) {
   team.picks.push(poke);
   selectedDraftId = null;
   clearUndoToast();
-  if (!team.isCpu) lastHumanPick = { teamIdx: ti, pokeId: poke.id };
+  if (!team.isCpu && !simulatingDraft) lastHumanPick = { teamIdx: ti, pokeId: poke.id };
   const pickEntry = recordDraftPick(ti, poke, currentPickNum() + 1);
-  if ((pickEntry.rank ?? Infinity) <= ANNOUNCE_TOP_RANK || pickValueTag(pickEntry) === 'steal') {
+  if (!simulatingDraft && ((pickEntry.rank ?? Infinity) <= ANNOUNCE_TOP_RANK || pickValueTag(pickEntry) === 'steal')) {
     showPickAnnouncement(team, poke, pickEntry);
   }
   if ((team.activeIds ?? []).length < ACTIVE_ROSTER_SIZE) {
@@ -3260,6 +3343,7 @@ function draftPokemon(poke) {
     showRosterScreen();
     return;
   }
+  if (simulatingDraft) return;   // the bulk sim renders once at the end
 
   refreshHeader();
   refreshSnakeBar();
@@ -5679,6 +5763,7 @@ function flashRosterTab() {
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (document.getElementById('simDraftOverlay')?.classList.contains('visible')) { closeSimDraftConfirm(); return; }
   if (faClaimState) { closeFaClaim(); return; }
   if (document.getElementById('faHistoryOverlay')?.classList.contains('visible')) { closeFaHistory(); return; }
   if (document.getElementById('champOverlay')?.classList.contains('visible')) {

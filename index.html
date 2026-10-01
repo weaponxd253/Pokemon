@@ -132,6 +132,7 @@
           <option value="id">Pokédex #</option>
         </select>
         <button class="btn-pick-for-me" id="btnPickForMe" onclick="pickForMe()">⚡ Pick for me</button>
+        <button class="btn-sim-draft" id="btnSimDraft" onclick="openSimDraftConfirm()">⏩ Sim rest of draft</button>
       </div>
       <div class="poke-grid" id="pokeGrid"></div>
     </div>
@@ -147,6 +148,9 @@
 <!-- Draft confirm modal + undo toast (fixed, so visible at any scroll position) -->
 <div class="dc-overlay" id="draftConfirmOverlay" onclick="if (event.target === this) clearDraftSelection()">
   <div class="dc-modal" id="draftConfirm" role="dialog" aria-modal="true" aria-labelledby="dcTitle"></div>
+</div>
+<div class="dc-overlay" id="simDraftOverlay" onclick="if (event.target === this) closeSimDraftConfirm()">
+  <div class="dc-modal" id="simDraftModal" role="dialog" aria-modal="true" aria-labelledby="simDraftTitle"></div>
 </div>
 <div class="draft-toast" id="draftToast" role="status" aria-live="polite"></div>
 <div class="pick-announce" id="pickAnnounce" aria-hidden="true"></div>
