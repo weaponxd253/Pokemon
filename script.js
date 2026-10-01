@@ -171,7 +171,7 @@ let faToastTimer = null;
 let season = null;
 let selectedBattleLogs = { season: null, playoff: null };
 let seasonWeekOpen = {};   // weeks the player expanded/collapsed by hand, keyed `${draft}-${week}`
-let battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
+let battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null, timers: [] };
 
 const SEASON_PHASES = {
   DRAFT: 'draft',
@@ -920,25 +920,29 @@ function skirmishStatScore(poke, typeMultiplier) {
   return bst * 0.45 + speed * 0.18 + bestAttack * 0.18 + bulk * 0.12 + typeBonus;
 }
 
+// Which factor decided a skirmish. Same rules the reason text has always used.
+function skirmishReasonKey(winnerPoke, loserPoke, winnerType, loserType, winnerScore, loserScore) {
+  if (winnerType.multiplier >= 4) return 'type4';
+  if (winnerType.multiplier > 1 && winnerType.multiplier > loserType.multiplier) return 'type';
+  if (loserType.multiplier > winnerType.multiplier) return 'worseType';
+  if ((winnerPoke?.stats?.speed ?? 0) - (loserPoke?.stats?.speed ?? 0) >= 25) return 'speed';
+  if (pokemonBulkScore(winnerPoke) - pokemonBulkScore(loserPoke) >= 55) return 'bulk';
+  if (winnerScore - loserScore <= 18) return 'tight';
+  return 'profile';
+}
+
 function skirmishReason(winnerPoke, loserPoke, winnerType, loserType, winnerScore, loserScore) {
   const winnerName = pokemonDisplayName(winnerPoke);
   const loserName = pokemonDisplayName(loserPoke);
-  if (winnerType.multiplier >= 4) {
-    return `${winnerName} overwhelmed ${loserName} with a 4x ${winnerType.type} matchup.`;
+  switch (skirmishReasonKey(winnerPoke, loserPoke, winnerType, loserType, winnerScore, loserScore)) {
+    case 'type4': return `${winnerName} overwhelmed ${loserName} with a 4x ${winnerType.type} matchup.`;
+    case 'type': return `${winnerName} exploited a ${winnerType.type} advantage into ${loserName}.`;
+    case 'worseType': return `${winnerName} survived the worse type chart and won on stats.`;
+    case 'speed': return `${winnerName} moved first and kept ${loserName} under pressure.`;
+    case 'bulk': return `${winnerName} outlasted ${loserName} through bulk.`;
+    case 'tight': return `${winnerName} edged ${loserName} in a tight exchange.`;
+    default: return `${winnerName} beat ${loserName} with the cleaner overall profile.`;
   }
-  if (winnerType.multiplier > 1 && winnerType.multiplier > loserType.multiplier) {
-    return `${winnerName} exploited a ${winnerType.type} advantage into ${loserName}.`;
-  }
-  if (loserType.multiplier > winnerType.multiplier) {
-    return `${winnerName} survived the worse type chart and won on stats.`;
-  }
-  const speedGap = (winnerPoke?.stats?.speed ?? 0) - (loserPoke?.stats?.speed ?? 0);
-  if (speedGap >= 25) return `${winnerName} moved first and kept ${loserName} under pressure.`;
-  const bulkGap = ((winnerPoke?.stats?.hp ?? 0) + (winnerPoke?.stats?.defense ?? 0) + (winnerPoke?.stats?.['special-defense'] ?? 0)) -
-    ((loserPoke?.stats?.hp ?? 0) + (loserPoke?.stats?.defense ?? 0) + (loserPoke?.stats?.['special-defense'] ?? 0));
-  if (bulkGap >= 55) return `${winnerName} outlasted ${loserName} through bulk.`;
-  if (winnerScore - loserScore <= 18) return `${winnerName} edged ${loserName} in a tight exchange.`;
-  return `${winnerName} beat ${loserName} with the cleaner overall profile.`;
 }
 
 function simulateSkirmish(pokeA, pokeB, teamAIdx, teamBIdx, setNumber) {
@@ -975,6 +979,7 @@ function simulateSkirmish(pokeA, pokeB, teamAIdx, teamBIdx, setNumber) {
     winnerPokemonId: winnerPokemon.id,
     winnerPokemonName: winnerPokemon.name,
     reason: skirmishReason(winnerPokemon, loserPokemon, winnerType, loserType, winnerScore, loserScore),
+    reasonKey: skirmishReasonKey(winnerPokemon, loserPokemon, winnerType, loserType, winnerScore, loserScore),
   };
 }
 
@@ -1007,6 +1012,8 @@ function simulateSets(game) {
     scoreA: winsA,
     scoreB: winsB,
     winnerIdx: winsA > winsB ? game.teamAIdx : game.teamBIdx,
+    lineupA: rosterA.map(p => p.id),
+    lineupB: rosterB.map(p => p.id),
   };
 }
 
@@ -1592,6 +1599,8 @@ function simulateGame(game) {
   game.ratingA = ratingA;
   game.ratingB = ratingB;
   game.sets = setResult.sets;
+  game.lineupA = setResult.lineupA ?? [];
+  game.lineupB = setResult.lineupB ?? [];
   game.winnerIdx = setResult.winnerIdx;
   game.scoreA = setResult.scoreA;
   game.scoreB = setResult.scoreB;
@@ -4399,7 +4408,27 @@ function buildPlaybackSteps(game) {
   });
 }
 
+// ── Battle viewer: staged playback ──
+// Each skirmish plays in three beats: intro (matchup, full HP) → clash
+// (lunge / hit) → result (HP drains, winner and reason revealed).
+const BP_TIMING = { intro: 900, clash: 500, dwell: 1400 };
+
+function prefersReducedMotion() {
+  return Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+}
+
+function bpClearTimers() {
+  (battlePlayback.timers ?? []).forEach(clearTimeout);
+  battlePlayback.timers = [];
+}
+
+function bpSchedule(fn, ms) {
+  battlePlayback.timers ??= [];
+  battlePlayback.timers.push(setTimeout(fn, ms / (battlePlayback.speed || 1)));
+}
+
 function clearBattlePlaybackTimer() {
+  bpClearTimers();
   if (battlePlayback.timer) clearInterval(battlePlayback.timer);
   battlePlayback.timer = null;
   battlePlayback.playing = false;
@@ -4415,59 +4444,121 @@ function currentBattlePlaybackSteps() {
   return game ? buildPlaybackSteps(game) : [];
 }
 
+function bpGoToStep(idx, animate = true) {
+  bpClearTimers();
+  battlePlayback.stepIdx = idx;
+  battlePlayback.final = false;
+  if (!animate || prefersReducedMotion()) {
+    battlePlayback.phase = 'result';
+    renderBattlePlayback(false);
+    if (battlePlayback.playing) bpSchedule(bpAdvance, BP_TIMING.dwell);
+    return;
+  }
+  battlePlayback.phase = 'intro';
+  renderBattlePlayback();
+  bpSchedule(() => { battlePlayback.phase = 'clash'; renderBattlePlayback(); }, BP_TIMING.intro);
+  bpSchedule(() => {
+    battlePlayback.phase = 'result';
+    renderBattlePlayback(true);
+    if (battlePlayback.playing) bpSchedule(bpAdvance, BP_TIMING.dwell);
+  }, BP_TIMING.intro + BP_TIMING.clash);
+}
+
+function bpAdvance() {
+  const steps = currentBattlePlaybackSteps();
+  if (battlePlayback.stepIdx < steps.length - 1) bpGoToStep(battlePlayback.stepIdx + 1, true);
+  else bpShowFinal();
+}
+
+function bpShowFinal() {
+  bpClearTimers();
+  battlePlayback.final = true;
+  battlePlayback.playing = false;
+  renderBattlePlayback();
+}
+
 function openBattlePlayback(scope, gameId) {
   const game = findBattlePlaybackGame(scope, gameId);
   if (!game?.sets?.length) return;
 
   clearBattlePlaybackTimer();
-  battlePlayback = { scope, gameId, stepIdx: 0, playing: false, timer: null };
+  const speed = [1, 2].includes(loadPrefs().battleSpeed) ? loadPrefs().battleSpeed : 1;
+  battlePlayback = { scope, gameId, stepIdx: 0, phase: 'intro', playing: true, final: false, timer: null, timers: [], speed };
   const overlay = document.getElementById('battlePlaybackOverlay');
   if (overlay) overlay.style.display = 'flex';
-  renderBattlePlayback();
+  bpGoToStep(0, true);
 }
 
 function closeBattlePlayback() {
   clearBattlePlaybackTimer();
-  battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
+  battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null, timers: [] };
   const overlay = document.getElementById('battlePlaybackOverlay');
   if (overlay) overlay.style.display = 'none';
+  // Don't leave the last frame's buttons sitting in the hidden overlay.
+  ['bpScoreboard', 'bpStage', 'bpWhy', 'battlePlaybackEffect', 'battlePlaybackText'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '';
+  });
 }
 
+// Next: finish the current reveal first, then move on (or to the final card).
 function nextBattleStep() {
-  const steps = currentBattlePlaybackSteps();
-  if (!steps.length) return;
-
-  if (battlePlayback.stepIdx >= steps.length - 1) {
-    clearBattlePlaybackTimer();
-    renderBattlePlayback();
+  if (!currentBattlePlaybackSteps().length || battlePlayback.final) return;
+  if (battlePlayback.phase !== 'result') {
+    bpClearTimers();
+    battlePlayback.phase = 'result';
+    renderBattlePlayback(true);
+    if (battlePlayback.playing) bpSchedule(bpAdvance, BP_TIMING.dwell);
     return;
   }
-
-  battlePlayback.stepIdx++;
-  renderBattlePlayback();
+  bpAdvance();
 }
 
 function prevBattleStep() {
-  clearBattlePlaybackTimer();
-  battlePlayback.stepIdx = Math.max(0, battlePlayback.stepIdx - 1);
-  renderBattlePlayback();
+  const steps = currentBattlePlaybackSteps();
+  if (!steps.length) return;
+  battlePlayback.playing = false;
+  if (battlePlayback.final) {
+    bpGoToStep(steps.length - 1, false);
+    return;
+  }
+  bpGoToStep(Math.max(0, battlePlayback.stepIdx - 1), false);
 }
 
 function toggleBattleAutoplay() {
-  const steps = currentBattlePlaybackSteps();
-  if (!steps.length) return;
-
+  if (!currentBattlePlaybackSteps().length) return;
   if (battlePlayback.playing) {
-    clearBattlePlaybackTimer();
-    renderBattlePlayback();
+    battlePlayback.playing = false;
+    bpClearTimers();
+    if (!battlePlayback.final) battlePlayback.phase = 'result';
+    renderBattlePlayback(false);
     return;
   }
-
-  if (battlePlayback.stepIdx >= steps.length - 1) battlePlayback.stepIdx = 0;
   battlePlayback.playing = true;
-  renderBattlePlayback();
-  battlePlayback.timer = setInterval(nextBattleStep, 1450);
+  if (battlePlayback.final) bpGoToStep(0, true);
+  else if (battlePlayback.phase === 'result') bpAdvance();
+  else bpGoToStep(battlePlayback.stepIdx, true);
 }
+
+function skipBattleToResult() {
+  if (!currentBattlePlaybackSteps().length) return;
+  bpShowFinal();
+}
+
+function setBattleSpeed(speed) {
+  battlePlayback.speed = speed === 2 ? 2 : 1;
+  savePrefs({ battleSpeed: battlePlayback.speed });
+  renderBattleControls();
+}
+
+document.addEventListener('keydown', (e) => {
+  const overlay = document.getElementById('battlePlaybackOverlay');
+  if (!overlay || overlay.style.display !== 'flex') return;
+  if (e.key === 'ArrowRight') { e.preventDefault(); nextBattleStep(); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); prevBattleStep(); }
+  else if (e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); toggleBattleAutoplay(); }
+  else if (e.key === 'Escape') { e.preventDefault(); closeBattlePlayback(); }
+});
 
 // Upset = the winner entered with under 35% odds.
 function gameIsUpset(game) {
@@ -4502,82 +4593,254 @@ function playbackEffectText(step, game) {
 }
 
 function playbackMultiplierText(multiplier) {
-  if (multiplier >= 4) return '4x hit';
-  if (multiplier > 1) return `${multiplier}x hit`;
-  if (multiplier === 0) return 'immune';
-  if (multiplier < 1) return `${multiplier}x resisted`;
-  return 'neutral';
+  if (multiplier >= 4) return '×4';
+  if (multiplier === 0) return 'no effect';
+  if (multiplier === 0.5) return '×½';
+  if (multiplier === 0.25) return '×¼';
+  return `×${multiplier}`;
 }
 
-function renderBattlePlaybackSide(game, step, side) {
-  const isA = side === 'A';
-  const team = teams[isA ? game.teamAIdx : game.teamBIdx];
-  const pokemonId = isA ? step.pokemonAId : step.pokemonBId;
-  const pokemonName = isA ? step.pokemonANameDisplay : step.pokemonBNameDisplay;
-  const multiplier = isA ? step.typeMultiplierA : step.typeMultiplierB;
-  const score = isA ? step.scoreA : step.scoreB;
-  const isWinner = step.winnerIdx === (isA ? game.teamAIdx : game.teamBIdx);
-  const hp = playbackHpPercent(step, side);
-  const hpTone = hp > 50 ? 'high' : hp > 20 ? 'mid' : 'low';
+// Full Pokémon data for an id (rosters first, then this generation's pool).
+function bpPokemon(id) {
+  for (const team of teams) {
+    const hit = team.picks.find(p => p.id === id);
+    if (hit) return hit;
+  }
+  return allPokemon.find(p => p.id === id) ?? null;
+}
 
+// A team's six for the party row: saved lineup, or (older saves) the
+// Pokémon that fought plus the team's current active roster.
+function bpLineup(game, side) {
+  const saved = side === 'A' ? game.lineupA : game.lineupB;
+  if (Array.isArray(saved) && saved.length) return saved.slice(0, ACTIVE_ROSTER_SIZE);
+  const fought = (game.sets ?? []).map(set => (side === 'A' ? set.pokemonAId : set.pokemonBId));
+  const team = teams[side === 'A' ? game.teamAIdx : game.teamBIdx];
+  return [...new Set([...fought, ...getActiveRosterIds(team)])].slice(0, ACTIVE_ROSTER_SIZE);
+}
+
+function bpReasonKey(step) {
+  if (step.reasonKey) return step.reasonKey;
+  const winnerIsA = step.winnerIdx === step.teamAIdx;
+  const pokeA = bpPokemon(step.pokemonAId);
+  const pokeB = bpPokemon(step.pokemonBId);
+  if (!pokeA || !pokeB) return null;
+  const typeA = bestTypeMultiplier(pokeA, pokeB);
+  const typeB = bestTypeMultiplier(pokeB, pokeA);
+  return winnerIsA
+    ? skirmishReasonKey(pokeA, pokeB, typeA, typeB, step.rollA ?? 0, step.rollB ?? 0)
+    : skirmishReasonKey(pokeB, pokeA, typeB, typeA, step.rollB ?? 0, step.rollA ?? 0);
+}
+
+function bpPartyHtml(game, steps, side, resultShown) {
+  const current = steps[battlePlayback.stepIdx];
+  const upto = battlePlayback.final ? steps.length : battlePlayback.stepIdx + (resultShown ? 1 : 0);
+  const done = steps.slice(0, upto);
+  const myTeam = side === 'A' ? game.teamAIdx : game.teamBIdx;
+  return `<div class="bp-party" aria-label="Lineup">${bpLineup(game, side).map(id => {
+    const fought = done.find(set => (side === 'A' ? set.pokemonAId : set.pokemonBId) === id);
+    const fainted = fought && fought.winnerIdx !== myTeam;
+    const won = fought && fought.winnerIdx === myTeam;
+    const active = !battlePlayback.final && current && (side === 'A' ? current.pokemonAId : current.pokemonBId) === id;
+    const name = pokemonDisplayName(bpPokemon(id) ?? { name: `#${id}` });
+    return `<span class="bp-mon${fainted ? ' fainted' : ''}${won ? ' won' : ''}${active ? ' active' : ''}" title="${name}${fainted ? ' (fainted)' : won ? ' (won)' : ''}">
+      <img src="${pokemonSpriteUrl(id)}" alt="${name}" onerror="this.style.visibility='hidden'">${won ? '<b>✓</b>' : ''}</span>`;
+  }).join('')}</div>`;
+}
+
+function bpSideHtml(game, step, steps, side, resultShown) {
+  const isA = side === 'A';
+  const teamIdx = isA ? game.teamAIdx : game.teamBIdx;
+  const team = teams[teamIdx];
+  const id = isA ? step.pokemonAId : step.pokemonBId;
+  const poke = bpPokemon(id);
+  const name = isA ? step.pokemonANameDisplay : step.pokemonBNameDisplay;
+  const isWinner = step.winnerIdx === teamIdx;
+  const hp = resultShown ? playbackHpPercent(step, side) : 100;
+  const hpTone = hp > 50 ? 'high' : hp > 20 ? 'mid' : 'low';
+  const typeGlow = TYPE_COLORS[poke?.types?.[0]] ?? team.color;
+  const phase = battlePlayback.phase;
+  const imgClass = phase === 'clash' ? (isWinner ? 'attacker' : 'hit') : phase === 'intro' ? 'enter' : '';
   return `
-    <div class="battle-side-inner">
-      <div class="battle-team-row">
-        <span class="battle-team-dot" style="background:${team.color}"></span>
-        <span>${team.name}</span>
-        <strong>${score}</strong>
-      </div>
-      <img class="${isWinner ? 'attacker' : 'hit'}" src="${pokemonSpriteUrl(pokemonId)}" alt="${pokemonName}" onerror="this.style.opacity=0">
-      <div class="battle-pokemon-name">${pokemonName}</div>
+    <div class="bp-side ${isA ? 'side-a' : 'side-b'}${resultShown ? (isWinner ? ' winner' : ' loser') : ''}" style="--team:${team.color};--glow:${typeGlow}">
+      <div class="bp-side-team"><span class="battle-team-dot" style="background:${team.color}"></span>${team.name}${youTagHtml(teamIdx)}</div>
+      <div class="bp-sprite"><img class="${imgClass}" src="${pokemonSpriteUrl(id)}" alt="${name}" onerror="this.style.opacity=0"></div>
+      <div class="battle-pokemon-name">${name}</div>
+      <div class="bp-types">${poke?.types?.length ? typePills(poke.types) : ''}</div>
       <div class="battle-hp" aria-label="HP ${hp}%"><span>HP</span><i><b class="hp-${hpTone}" data-hp="${hp}" style="width:100%"></b></i></div>
-      <div class="battle-pokemon-meta">${playbackMultiplierText(multiplier)}</div>
-      <div class="battle-result-tag">${isWinner ? 'Wins skirmish' : 'Faints'}</div>
+      <div class="battle-result-tag${resultShown ? '' : ' pending'}">${resultShown ? (isWinner ? 'Wins skirmish' : 'Faints') : '…'}</div>
+      ${bpPartyHtml(game, steps, side, resultShown)}
     </div>
   `;
 }
 
-function renderBattlePlayback() {
+// Why it won: type matchup both ways + four stat comparisons, with the
+// deciding factor highlighted once the result is shown.
+function bpWhyHtml(game, step, resultShown) {
+  const pokeA = bpPokemon(step.pokemonAId);
+  const pokeB = bpPokemon(step.pokemonBId);
+  const key = resultShown ? bpReasonKey({ ...step, teamAIdx: game.teamAIdx, teamBIdx: game.teamBIdx }) : null;
+  const typeA = pokeA && pokeB ? bestTypeMultiplier(pokeA, pokeB) : { type: null, multiplier: step.typeMultiplierA };
+  const typeB = pokeA && pokeB ? bestTypeMultiplier(pokeB, pokeA) : { type: null, multiplier: step.typeMultiplierB };
+  const tone = m => (m > 1 ? 'good' : m < 1 ? 'bad' : 'even');
+  const typeLine = (t, from, to) => `<span class="bpw-type ${tone(t.multiplier)}">${t.type ? labelFromKey(t.type) : from} → ${to} <b>${playbackMultiplierText(t.multiplier)}</b></span>`;
+  const typeDecisive = ['type4', 'type', 'worseType'].includes(key);
+  const rows = [
+    { label: 'BST', key: 'profile', get: p => p?.bst ?? null },
+    { label: 'Speed', key: 'speed', get: p => p?.stats?.speed ?? null },
+    { label: 'Attack', key: 'attack', get: p => (p ? pokemonAttackScore(p) : null) },
+    { label: 'Bulk', key: 'bulk', get: p => (p ? pokemonBulkScore(p) : null) },
+  ];
+  const winnerIsA = step.winnerIdx === game.teamAIdx;
+  const statRows = rows.map(row => {
+    const a = row.get(pokeA);
+    const b = row.get(pokeB);
+    if (a === null || b === null) return '';
+    const max = Math.max(a, b, 1);
+    const decisive = key === row.key;
+    return `
+      <div class="bpw-row${decisive ? ' decisive' : ''}">
+        <span class="bpw-val${a > b ? ' lead' : ''}">${a}</span>
+        <i class="bpw-bar a"><b style="width:${(a / max) * 100}%"></b></i>
+        <span class="bpw-label">${row.label}</span>
+        <i class="bpw-bar b"><b style="width:${(b / max) * 100}%"></b></i>
+        <span class="bpw-val${b > a ? ' lead' : ''}">${b}</span>
+      </div>`;
+  }).join('');
+  let note = '';
+  if (resultShown && pokeA && pokeB) {
+    const winnerBst = winnerIsA ? pokeA.bst : pokeB.bst;
+    const loserBst = winnerIsA ? pokeB.bst : pokeA.bst;
+    if (loserBst - winnerBst >= 15) note = `Won despite ${loserBst - winnerBst} less BST`;
+    else if (key === 'tight') note = 'Tight finish — it came down to the roll';
+  }
+  const nameA = step.pokemonANameDisplay;
+  const nameB = step.pokemonBNameDisplay;
+  return `
+    <div class="bpw-types${typeDecisive ? ' decisive' : ''}">
+      ${typeLine(typeA, nameA, pokeB?.types?.map(labelFromKey).join('/') ?? nameB)}
+      ${typeDecisive ? '<span class="bpw-flag">◀ decisive ▶</span>' : ''}
+      ${typeLine(typeB, nameB, pokeA?.types?.map(labelFromKey).join('/') ?? nameA)}
+    </div>
+    ${statRows ? `<div class="bpw-stats">${statRows}</div>` : ''}
+    ${note ? `<div class="bpw-note">${note}</div>` : ''}
+  `;
+}
+
+function bpFinalHtml(game, steps) {
+  const winner = teams[game.winnerIdx];
+  const loser = teams[game.winnerIdx === game.teamAIdx ? game.teamBIdx : game.teamAIdx];
+  const winnerScore = game.winnerIdx === game.teamAIdx ? game.scoreA : game.scoreB;
+  const loserScore = game.winnerIdx === game.teamAIdx ? game.scoreB : game.scoreA;
+  const wins = new Map();
+  steps.filter(set => set.winnerIdx === game.winnerIdx)
+    .forEach(set => wins.set(set.winnerPokemonId, (wins.get(set.winnerPokemonId) ?? 0) + 1));
+  const [mvpId, mvpWins] = [...wins.entries()].sort((a, b) => b[1] - a[1])[0] ?? [];
+  const mvp = mvpId ? bpPokemon(mvpId) ?? { name: steps.find(s => s.winnerPokemonId === mvpId)?.winnerPokemonName } : null;
+  return `
+    <div class="bp-final" style="--team:${winner.color}">
+      <div class="bp-final-kicker">Final${gameIsUpset(game) ? ' · Upset' : ''}</div>
+      <div class="bp-final-title"><span style="color:${winner.color}">${winner.name}</span> win ${winnerScore}–${loserScore}</div>
+      <div class="bp-final-sub">over ${loser.name}</div>
+      ${mvp ? `
+        <div class="bp-final-mvp">
+          <img src="${pokemonSpriteUrl(mvpId)}" alt="" onerror="this.style.visibility='hidden'">
+          <div><div class="champ-mvp-label">Player of the game</div>
+          <div class="champ-mvp-name">${pokemonDisplayName(mvp)}</div>
+          <div class="champ-mvp-sub">${mvpWins} skirmish win${mvpWins === 1 ? '' : 's'}</div></div>
+        </div>` : ''}
+      <div class="bp-final-sets">${steps.map(set => `
+        <span class="bp-final-set" style="--team:${teams[set.winnerIdx]?.color ?? '#888'}">${set.setNumber} · ${pokemonDisplayName({ name: set.winnerPokemonName })}</span>`).join('')}
+      </div>
+      <div class="bp-final-actions">
+        <button class="champ-btn secondary" onclick="battlePlayback.playing = true; bpGoToStep(0, true)">↻ Watch again</button>
+        <button class="champ-btn primary btn-battle-close" onclick="closeBattlePlayback()">Close</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderBattleControls() {
+  const steps = currentBattlePlaybackSteps();
+  const final = battlePlayback.final;
+  const btnPrev = document.getElementById('btnBattlePrev');
+  const btnNext = document.getElementById('btnBattleNext');
+  const btnAuto = document.getElementById('btnBattleAuto');
+  const btnSkip = document.getElementById('btnBattleSkip');
+  if (btnPrev) btnPrev.disabled = !final && battlePlayback.stepIdx === 0;
+  if (btnNext) btnNext.disabled = final || !steps.length;
+  if (btnSkip) btnSkip.disabled = final;
+  if (btnAuto) btnAuto.textContent = battlePlayback.playing ? '❚❚ Pause' : final ? '↻ Replay' : '▶ Auto Play';
+  document.querySelectorAll('.bp-speed button').forEach(btn => {
+    const on = Number(btn.dataset.speed) === (battlePlayback.speed || 1);
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', String(on));
+  });
+}
+
+function renderBattlePlayback(animateHp = false) {
   const game = currentBattlePlaybackGame();
   const steps = currentBattlePlaybackSteps();
   if (!game || !steps.length) return;
 
   battlePlayback.stepIdx = clamp(battlePlayback.stepIdx, 0, steps.length - 1);
   const step = steps[battlePlayback.stepIdx];
+  const final = battlePlayback.final;
+  const resultShown = final || battlePlayback.phase === 'result';
   const teamA = teams[game.teamAIdx];
   const teamB = teams[game.teamBIdx];
-  const sideA = document.getElementById('battleSideA');
-  const sideB = document.getElementById('battleSideB');
-  const btnPrev = document.getElementById('btnBattlePrev');
-  const btnNext = document.getElementById('btnBattleNext');
-  const btnAuto = document.getElementById('btnBattleAuto');
+  const winsNeeded = 3;
+  const scoreA = final ? game.scoreA : step.scoreA - (!resultShown && step.winnerIdx === game.teamAIdx ? 1 : 0);
+  const scoreB = final ? game.scoreB : step.scoreB - (!resultShown && step.winnerIdx === game.teamBIdx ? 1 : 0);
+  const pips = (n, color) => Array.from({ length: winsNeeded }, (_, i) =>
+    `<i class="${i < n ? 'on' : ''}" style="--team:${color}"></i>`).join('');
 
-  document.getElementById('battlePlaybackTitle').textContent = `${teamA.name} vs ${teamB.name}`;
-  document.getElementById('battlePlaybackSub').textContent =
-    `Set ${step.setNumber} of ${steps.length}${gameIsUpset(game) ? ' · Upset' : ''}`;
-  document.getElementById('battlePlaybackText').textContent = step.reason;
-  document.getElementById('battlePlaybackScore').textContent =
-    `${teamA.name} ${step.scoreA} - ${teamB.name} ${step.scoreB}`;
+  document.getElementById('bpScoreboard').innerHTML = `
+    <div class="bps-team a"><span class="battle-team-dot" style="background:${teamA.color}"></span><span class="bps-name">${teamA.name}</span>${youTagHtml(game.teamAIdx)}<span class="bps-pips">${pips(scoreA, teamA.color)}</span></div>
+    <div class="bps-score">
+      <strong id="battlePlaybackTitle" aria-label="${teamA.name} ${scoreA}, ${teamB.name} ${scoreB}">${scoreA} — ${scoreB}</strong>
+      <span id="battlePlaybackSub">${final ? 'Final' : `Skirmish ${step.setNumber} of ${steps.length}`} · first to ${winsNeeded}${gameIsUpset(game) && resultShown && (final || battlePlayback.stepIdx === steps.length - 1) ? ' · Upset' : ''}</span>
+    </div>
+    <div class="bps-team b"><span class="bps-pips">${pips(scoreB, teamB.color)}</span>${youTagHtml(game.teamBIdx)}<span class="bps-name">${teamB.name}</span><span class="battle-team-dot" style="background:${teamB.color}"></span></div>
+    <button class="btn-battle-close bps-close" onclick="closeBattlePlayback()" aria-label="Close battle viewer">✕</button>
+  `;
 
-  sideA.className = `battle-side ${step.winnerIdx === game.teamAIdx ? 'winner' : 'loser'}`;
-  sideB.className = `battle-side ${step.winnerIdx === game.teamBIdx ? 'winner' : 'loser'}`;
-  sideA.innerHTML = renderBattlePlaybackSide(game, step, 'A');
-  sideB.innerHTML = renderBattlePlaybackSide(game, step, 'B');
-  // Start at full HP, then drain on the next frame so the bars animate.
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    document.querySelectorAll('#battlePlaybackOverlay .battle-hp b').forEach(bar => {
-      bar.style.width = `${bar.dataset.hp}%`;
-    });
-  }));
-  const effect = playbackEffectText({ ...step, teamAIdx: game.teamAIdx, teamBIdx: game.teamBIdx }, game);
+  const stage = document.getElementById('bpStage');
+  const why = document.getElementById('bpWhy');
   const effectEl = document.getElementById('battlePlaybackEffect');
-  if (effectEl) {
-    effectEl.textContent = effect.text;
-    effectEl.className = `battle-playback-effect${effect.tone ? ` ${effect.tone}` : ''}`;
+  const textEl = document.getElementById('battlePlaybackText');
+
+  if (final) {
+    stage.innerHTML = bpFinalHtml(game, steps);
+    why.innerHTML = '';
+    effectEl.textContent = '';
+    effectEl.className = 'battle-playback-effect';
+    textEl.textContent = `${teams[game.winnerIdx].name} won ${Math.max(game.scoreA, game.scoreB)}–${Math.min(game.scoreA, game.scoreB)} in ${steps.length} skirmishes.`;
+    renderBattleControls();
+    return;
   }
 
-  btnPrev.disabled = battlePlayback.stepIdx === 0;
-  btnNext.disabled = battlePlayback.stepIdx === steps.length - 1;
-  btnAuto.textContent = battlePlayback.playing ? 'Pause' : battlePlayback.stepIdx === steps.length - 1 ? 'Replay' : 'Auto Play';
+  stage.innerHTML = `
+    ${bpSideHtml(game, step, steps, 'A', resultShown)}
+    <div class="battle-versus${battlePlayback.phase === 'clash' ? ' clash' : ''}">VS</div>
+    ${bpSideHtml(game, step, steps, 'B', resultShown)}
+  `;
+  why.innerHTML = bpWhyHtml(game, step, resultShown);
+
+  const bars = stage.querySelectorAll('.battle-hp b');
+  if (resultShown && animateHp && !prefersReducedMotion()) {
+    requestAnimationFrame(() => requestAnimationFrame(() => bars.forEach(bar => { bar.style.width = `${bar.dataset.hp}%`; })));
+  } else {
+    bars.forEach(bar => { bar.style.transition = 'none'; bar.style.width = `${bar.dataset.hp}%`; });
+  }
+
+  const effect = resultShown ? playbackEffectText({ ...step, teamAIdx: game.teamAIdx, teamBIdx: game.teamBIdx }, game) : { text: '', tone: '' };
+  effectEl.textContent = effect.text;
+  effectEl.className = `battle-playback-effect${effect.tone ? ` ${effect.tone}` : ''}`;
+  textEl.textContent = resultShown
+    ? step.reason
+    : battlePlayback.phase === 'clash' ? '…' : `${step.pokemonANameDisplay} vs ${step.pokemonBNameDisplay}`;
+  renderBattleControls();
 }
 
 // ── Regular Season ──

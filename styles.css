@@ -2812,6 +2812,131 @@ details.season-week.next .sw-upcoming { color: var(--yellow); font-weight: 700; 
 .season-bottom-status { font-size: 14px; color: var(--muted); }
 .season-bottom-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
+/* ═══════════ BATTLE VIEWER ═══════════ */
+.battle-playback { width: min(980px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; }
+
+/* Scoreboard */
+.bp-scoreboard {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) 36px; align-items: center; gap: 14px;
+  padding: 14px 16px; border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(255,215,0,0.06), transparent);
+}
+.bps-team { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 17px; font-weight: 700; }
+.bps-team.b { justify-content: flex-end; }
+.bps-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bps-pips { display: inline-flex; gap: 4px; margin: 0 4px; }
+.bps-pips i { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--team); opacity: 0.6; }
+.bps-pips i.on { background: var(--team); opacity: 1; box-shadow: 0 0 8px var(--team); }
+.bps-score { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.bps-score strong { font-family: 'Press Start 2P', monospace; font-size: 20px; color: var(--yellow); white-space: nowrap; }
+.bps-score span { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; white-space: nowrap; }
+.bps-close {
+  width: 36px; height: 36px; border-radius: 8px; cursor: pointer; font-size: 16px;
+  background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+}
+
+/* Stage */
+.bp-stage { display: grid; grid-template-columns: minmax(0, 1fr) 54px minmax(0, 1fr); gap: 10px; padding: 16px 18px 8px; align-items: stretch; }
+.bp-side {
+  min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 12px 14px 12px; border-radius: 12px;
+  background: radial-gradient(circle at 50% 38%, color-mix(in srgb, var(--glow) 22%, transparent), transparent 62%), var(--surface2);
+  border: 1px solid var(--border); transition: border-color 0.25s, box-shadow 0.25s, opacity 0.25s;
+}
+.bp-side.winner { border-color: var(--yellow); box-shadow: 0 0 26px rgba(255,215,0,0.15); }
+.bp-side.loser { opacity: 0.72; }
+.bp-side.loser .bp-sprite img { filter: grayscale(0.85) brightness(0.8); transform: translateY(6px) rotate(-4deg); transition: filter 0.4s, transform 0.4s; }
+.bp-side-team { align-self: stretch; display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 700; }
+.bp-sprite { height: 150px; display: flex; align-items: center; justify-content: center; }
+.bp-sprite img { width: 150px; height: 150px; image-rendering: pixelated; }
+.bp-sprite img.enter { animation: bp-enter 0.45s cubic-bezier(.2,1.2,.4,1); }
+.side-a .bp-sprite img.enter { --from: -40px; }
+.side-b .bp-sprite img.enter { --from: 40px; }
+@keyframes bp-enter { from { transform: translateX(var(--from, 0)); opacity: 0; } to { transform: none; opacity: 1; } }
+.bp-sprite img.attacker { animation: attack-lunge 0.4s ease-out; }
+.side-a .bp-sprite img.attacker { animation-name: bp-lunge-right; }
+.side-b .bp-sprite img.attacker { animation-name: bp-lunge-left; }
+@keyframes bp-lunge-right { 50% { transform: translateX(24px) scale(1.08); } }
+@keyframes bp-lunge-left { 50% { transform: translateX(-24px) scale(1.08); } }
+.bp-sprite img.hit { animation: hit-shake 0.45s ease-in-out 0.15s; }
+.bp-side .battle-pokemon-name { font-size: 20px; }
+.bp-types { display: flex; gap: 4px; min-height: 18px; }
+.bp-side .battle-hp { margin-top: 2px; }
+.battle-result-tag.pending { opacity: 0.4; }
+.battle-versus.clash { color: var(--yellow); animation: pa-pop 0.3s ease-out; font-size: 12px; }
+
+/* Party row */
+.bp-party { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; justify-content: center; }
+.bp-mon {
+  position: relative; width: 34px; height: 34px; border-radius: 50%;
+  background: var(--surface); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+}
+.bp-mon img { width: 32px; height: 32px; image-rendering: pixelated; }
+.bp-mon.active { border-color: var(--yellow); box-shadow: 0 0 0 2px rgba(255,215,0,0.4); }
+.bp-mon.fainted img { filter: grayscale(1) brightness(0.55); }
+.bp-mon.fainted::after { content: ''; position: absolute; left: 6px; right: 6px; top: 50%; height: 2px; background: #ff6b6b; transform: rotate(-35deg); }
+.bp-mon b {
+  position: absolute; right: -3px; bottom: -3px; width: 14px; height: 14px; border-radius: 50%;
+  background: #4dff91; color: #03210f; font-size: 9px; display: flex; align-items: center; justify-content: center;
+}
+
+/* Why it won */
+.bp-why { margin: 4px 18px 6px; padding: 10px 14px; border-radius: 10px; background: rgba(255,255,255,0.025); border: 1px solid var(--border); }
+.bp-why:empty { display: none; }
+.bpw-types { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; padding-bottom: 8px; }
+.bpw-types.decisive { color: var(--yellow); }
+.bpw-type b { margin-left: 3px; }
+.bpw-type.good b { color: #4dff91; }
+.bpw-type.bad b { color: #ff6b6b; }
+.bpw-type.even b { color: var(--muted); }
+.bpw-flag { font-family: 'Press Start 2P', monospace; font-size: 7px; color: var(--yellow); }
+.bpw-stats { display: grid; gap: 4px; }
+.bpw-row {
+  display: grid; grid-template-columns: 40px minmax(0, 1fr) 118px minmax(0, 1fr) 40px; align-items: center; gap: 8px;
+  font-size: 13px; padding: 2px 6px; border-radius: 6px;
+}
+.bpw-row.decisive { background: rgba(255,215,0,0.09); outline: 1px solid rgba(255,215,0,0.45); }
+.bpw-val { color: var(--muted); text-align: center; font-weight: 700; }
+.bpw-val.lead { color: var(--text); }
+.bpw-label { text-align: center; font-weight: 700; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+.bpw-row.decisive .bpw-label { color: var(--yellow); }
+.bpw-row.decisive .bpw-label::after { content: ' ◀ decisive'; }
+.bpw-bar { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; display: flex; }
+.bpw-bar.a { justify-content: flex-end; }
+.bpw-bar b { display: block; height: 100%; background: var(--muted); transition: width 0.4s; }
+.bpw-row.decisive .bpw-bar b { background: var(--yellow); }
+.bpw-note { margin-top: 6px; text-align: center; font-size: 13px; font-weight: 700; color: #ff5fd2; }
+
+/* Final card */
+.bp-final { grid-column: 1 / -1; text-align: center; padding: 14px 10px 6px; animation: pa-in 0.35s cubic-bezier(.2,1.4,.4,1); }
+.bp-final-kicker { font-family: 'Press Start 2P', monospace; font-size: 9px; color: var(--yellow); letter-spacing: 1px; text-transform: uppercase; }
+.bp-final-title { margin-top: 10px; font-family: 'Press Start 2P', monospace; font-size: clamp(14px, 2.6vw, 20px); line-height: 1.5; }
+.bp-final-sub { font-size: 15px; color: var(--muted); }
+.bp-final-mvp {
+  margin: 14px auto 0; width: fit-content; display: flex; align-items: center; gap: 12px; text-align: left;
+  padding: 8px 16px 8px 8px; border-radius: 10px; background: var(--surface2); border: 1px solid var(--border);
+}
+.bp-final-mvp img { width: 72px; height: 72px; image-rendering: pixelated; }
+.bp-final-sets { margin-top: 14px; display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+.bp-final-set { padding: 3px 10px; border-radius: 999px; font-size: 13px; background: var(--surface2); border: 1px solid var(--team); }
+.bp-final-actions { margin: 16px auto 0; max-width: 360px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+/* Controls */
+.battle-playback-controls { display: flex !important; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.battle-playback-controls .btn-battle-control { flex: 1 1 120px; }
+.bp-speed { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex: 0 0 auto; }
+.bp-speed button {
+  min-width: 46px; padding: 0 10px; background: var(--surface2); color: var(--muted); border: none; cursor: pointer;
+  font-family: 'Press Start 2P', monospace; font-size: 9px;
+}
+.bp-speed button.on { background: var(--yellow); color: #000; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bp-sprite img, .bp-final, .battle-versus.clash { animation: none !important; }
+  .bp-side.loser .bp-sprite img { transition: none; }
+}
+
 /* ═══════════════════════════════════════
    MOBILE RESPONSIVE  (≤ 640px)
    ═══════════════════════════════════════ */
@@ -2866,6 +2991,34 @@ details.season-week.next .sw-upcoming { color: var(--yellow); font-weight: 700; 
   .fa-bottom .btn-fa-secondary, .fa-bottom .btn-fa-primary { width: auto; padding: 12px 10px; font-size: 8px; flex: 1; }
   .fa-bottom-status { display: none; }
   .draft-toast.above-bar { bottom: 70px; }
+
+  /* ── Battle viewer on phones ── */
+  .bp-scoreboard { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) 32px; gap: 6px; padding: 10px; }
+  .bps-team { font-size: 13px; gap: 4px; }
+  .bps-team .you-tag { display: none; }
+  .bps-pips i { width: 9px; height: 9px; }
+  .bps-score strong { font-size: 14px; }
+  .bps-score span { font-size: 10px; letter-spacing: 0; }
+  .bp-stage { grid-template-columns: minmax(0, 1fr) 26px minmax(0, 1fr); gap: 4px; padding: 10px 8px 4px; }
+  .bp-side { padding: 8px 6px; }
+  .bp-side-team { font-size: 12px; }
+  .bp-sprite, .bp-sprite img { height: 84px; width: 84px; }
+  .bp-side .battle-pokemon-name { font-size: 15px; }
+  .bp-party { gap: 2px; flex-wrap: nowrap; }
+  .bp-mon { width: 20px; height: 20px; }
+  .bp-mon img { width: 18px; height: 18px; }
+  .bp-mon b { width: 11px; height: 11px; font-size: 7px; }
+  .bps-name { display: none; }  /* names are on each side card below */
+  .battle-playback-controls { padding: 10px 8px 12px !important; gap: 6px; }
+  .battle-playback-controls .btn-battle-control { flex: 1 1 28%; padding: 12px 4px; font-size: 8px; }
+  #btnBattleSkip { order: 5; }
+  .bp-speed { order: 4; }
+  .bp-why { margin: 4px 8px; padding: 8px; }
+  .bpw-row { grid-template-columns: 30px minmax(0, 1fr) 64px minmax(0, 1fr) 30px; gap: 4px; font-size: 12px; }
+  .bpw-label { font-size: 10px; }
+  .bpw-flag { display: none; }
+  .bpw-row.decisive .bpw-label::after { content: ''; }
+  .bpw-row.decisive .bpw-label::before { content: '★ '; }
 
   /* ── Season on phones: normal page scroll, sticky bottom bar ── */
   #seasonScreen, body.has-phase-tracker #seasonScreen { height: auto; overflow: visible; padding: 14px 12px 0; }
