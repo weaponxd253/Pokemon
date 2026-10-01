@@ -310,6 +310,7 @@
       <div class="season-section-lbl">Standings</div>
       <div class="season-standings" id="seasonStandings"></div>
       <div class="season-next-game" id="seasonNextGame"></div>
+      <div class="league-news" id="seasonNews"></div>
       <div class="season-leaders" id="seasonLeaders"></div>
     </div>
 
@@ -349,6 +350,7 @@
       <div class="playoff-section-lbl">Seeds</div>
       <div class="playoff-seeds" id="playoffSeeds"></div>
       <div class="playoff-champion" id="playoffChampion"></div>
+      <div class="league-news" id="playoffNews"></div>
       <div class="battle-log-panel" id="playoffBattleLog"></div>
     </div>
   </div>
@@ -379,6 +381,7 @@
         <button type="button" data-speed="2" onclick="setBattleSpeed(2)">2×</button>
       </div>
       <button class="btn-battle-control" id="btnBattleSkip" onclick="skipBattleToResult()" title="Jump to the final result">Skip to result</button>
+      <button class="btn-battle-control bp-predict-toggle" id="btnBattlePredict" onclick="togglePredictMode()" title="Call the winner of each skirmish before it plays (keys 1 / 2)">🎯 Predict</button>
       <button class="btn-battle-control" id="btnBattleNext" onclick="nextBattleStep()" title="Next (→)">Next ▶</button>
     </div>
   </div>
@@ -387,6 +390,16 @@
 <!-- ══════════════ MATCH (manager mode) ══════════════ -->
 <div id="matchOverlay">
   <div class="match-modal" id="matchModal" role="dialog" aria-modal="true" aria-labelledby="matchTitle"></div>
+</div>
+
+<!-- ══════════════ AWARDS NIGHT ══════════════ -->
+<div class="champ-overlay awards-overlay" id="awardsOverlay">
+  <div class="champ-card awards-card" id="awardsCard" role="dialog" aria-modal="true" aria-labelledby="awardsTitle"></div>
+</div>
+
+<!-- ══════════════ SERIES PREVIEW ══════════════ -->
+<div class="dc-overlay lineup-overlay" id="seriesPreviewOverlay" onclick="if (event.target === this) closeSeriesPreview()">
+  <div class="dc-modal series-preview-modal" id="seriesPreviewModal" role="dialog" aria-modal="true" aria-labelledby="seriesPreviewTitle"></div>
 </div>
 
 <!-- ══════════════ LINEUP & SCOUTING ══════════════ -->
@@ -399,6 +412,7 @@
   <div class="lobby-header-row">
     <div class="lobby-gen-complete" id="lobbyGenComplete">Gen Complete</div>
     <div class="lobby-draft-label" id="lobbyDraftNum">Draft 1 · Season continues</div>
+    <button type="button" class="btn-awards" onclick="openAwardsNight()">🏅 Awards night</button>
   </div>
 
   <div class="lobby-section">
@@ -422,6 +436,7 @@
   <div class="comp-title">SEASON COMPLETE!</div>
   <div class="comp-sub">Final Rankings by Playoff Finish</div>
   <div class="comp-champions" id="compChampions"></div>
+  <div class="comp-awards-row"><button type="button" class="btn-awards" onclick="openAwardsNight()">🏅 Awards night</button></div>
   <div class="comp-grid" id="compGrid"></div>
   <button class="btn-restart" onclick="restart()">↺ &nbsp;NEW SEASON</button>
 </div>
