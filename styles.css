@@ -2948,6 +2948,133 @@ details.season-week.next .sw-upcoming { color: var(--yellow); font-weight: 700; 
   .bp-side.loser .bp-sprite img { transition: none; }
 }
 
+/* ═══════════ MATCH SCREEN (manager mode) ═══════════ */
+#matchOverlay {
+  display: none; position: fixed; inset: 0; z-index: 310;
+  align-items: center; justify-content: center; padding: 16px;
+  background: rgba(5,5,16,0.9);
+}
+.match-modal {
+  width: min(1000px, 100%); max-height: calc(100vh - 32px); overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 28px 80px rgba(0,0,0,0.5);
+}
+.match-body { padding: 16px 18px 18px; }
+.mp-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.mp-actions.single { justify-content: center; }
+.match-body .mp-actions {
+  position: sticky; bottom: -18px; z-index: 2; margin: 14px -18px -18px; padding: 12px 18px 14px;
+  background: linear-gradient(180deg, transparent, var(--surface) 30%);
+}
+.mp-actions button, .mp-lineup-link {
+  min-height: 44px; padding: 0 18px; border-radius: 8px; cursor: pointer;
+  font-family: 'Rajdhani', sans-serif; font-size: 15px; font-weight: 700;
+}
+.mp-vs { display: flex; align-items: center; justify-content: center; font-family: 'Press Start 2P', monospace; font-size: 9px; color: var(--muted); }
+
+/* Plan phase */
+.mp-cols { display: grid; grid-template-columns: minmax(0, 1fr) 40px minmax(0, 1fr); gap: 10px; }
+.mp-col { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 10px; background: var(--surface2); border: 1px solid var(--border); }
+.mp-team { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 700; }
+.mp-odds { margin-left: auto; font-size: 14px; color: var(--yellow); }
+.mp-roster { display: flex; gap: 2px; flex-wrap: wrap; }
+.mp-roster img { width: 44px; height: 44px; image-rendering: pixelated; background: var(--surface); border-radius: 50%; }
+.mp-weak { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.mp-cpu-plan { font-size: 14px; color: var(--muted); }
+.mp-cpu-plan strong { color: var(--text); }
+.mp-plans { display: grid; gap: 6px; }
+.mp-plan {
+  display: grid; gap: 2px; text-align: left; padding: 8px 12px; border-radius: 8px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: 'Rajdhani', sans-serif;
+}
+.mp-plan strong { font-size: 15px; }
+.mp-plan span { font-size: 12px; color: var(--muted); }
+.mp-plan.on { border-color: var(--yellow); background: rgba(255,215,0,0.08); }
+.mp-plan.on strong { color: var(--yellow); }
+.mp-lineup-link { background: transparent; color: var(--text); border: 1px dashed var(--border); min-height: 36px; }
+.mp-lineup-link:hover { border-color: var(--yellow); color: var(--yellow); }
+.mp-how { margin-top: 12px; font-size: 13px; color: var(--muted); text-align: center; }
+
+/* Fighter cards */
+.mf-card {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 10px 8px; border-radius: 10px; text-align: center;
+  background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-family: 'Rajdhani', sans-serif;
+}
+button.mf-card { cursor: pointer; transition: border-color 0.15s, transform 0.15s; }
+button.mf-card:hover { border-color: var(--yellow); transform: translateY(-2px); }
+.mf-card.selected { border-color: var(--yellow); box-shadow: 0 0 0 2px var(--yellow); }
+.mf-card img { width: 80px; height: 80px; image-rendering: pixelated; }
+.mf-name { font-size: 16px; font-weight: 700; text-transform: capitalize; }
+.mf-types { display: flex; gap: 3px; min-height: 16px; }
+.mf-stats { font-size: 12px; color: var(--muted); }
+.mf-type { font-size: 12px; color: var(--muted); }
+.mf-chance { font-size: 13px; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: var(--surface); }
+.mf-chance.good { color: #4dff91; }
+.mf-chance.even { color: var(--yellow); }
+.mf-chance.bad { color: #ff6b6b; }
+.mf-label {
+  position: absolute; top: -8px; left: 50%; transform: translateX(-50%); white-space: nowrap;
+  padding: 2px 7px; border-radius: 4px; background: #4dff91; color: #03210f;
+  font-family: 'Press Start 2P', monospace; font-size: 6px;
+}
+.mf-hidden { justify-content: center; min-height: 170px; opacity: 0.6; }
+.mf-q { font-family: 'Press Start 2P', monospace; font-size: 32px; color: var(--muted); }
+
+/* Pick phase */
+.mk-row { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: start; }
+.mk-them, .mk-mine { display: flex; flex-direction: column; gap: 8px; }
+.mk-label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.mk-them .mf-card img { width: 120px; height: 120px; }
+.mk-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; padding-top: 6px; }
+
+/* Result phase */
+.mr-row { display: grid; grid-template-columns: minmax(0, 1fr) 40px minmax(0, 1fr); gap: 10px; }
+.mr-side { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.mr-side .mf-card img { width: 120px; height: 120px; }
+.mr-side.winner .mf-card { border-color: var(--yellow); box-shadow: 0 0 22px rgba(255,215,0,0.15); }
+.mr-side.loser .mf-card { opacity: 0.7; }
+.mr-side.loser .mf-card img { filter: grayscale(0.85) brightness(0.8); }
+.mr-side .battle-result-tag { align-self: center; }
+.match-body .battle-playback-effect { margin: 10px 0 6px; }
+.match-body .battle-playback-text { margin: 6px 0 0; }
+.bp-final-actions.single { grid-template-columns: 1fr; max-width: 240px; }
+
+/* Bottom-bar controls */
+.mgr-toggle {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap;
+  font-size: 13px; font-weight: 700; color: var(--muted); padding: 0 6px;
+}
+.mgr-toggle input { accent-color: var(--yellow); width: 16px; height: 16px; }
+
+/* Lineup & scouting */
+.lineup-overlay { z-index: 330; }
+.lineup-modal { width: min(640px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; }
+.lu-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.lu-title { font-size: 20px; font-weight: 700; margin-top: 2px; }
+.lu-title select { width: auto; font-size: 16px; padding: 4px 10px; }
+.lu-scout { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--surface2); border-left: 4px solid var(--team, var(--border)); }
+.lu-scout-title { font-size: 14px; color: var(--muted); }
+.lu-scout-title strong { font-weight: 700; }
+.lu-scout-row { margin-top: 8px; display: grid; gap: 8px; }
+.lu-scout-notes { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+.lu-scout-notes strong { color: var(--text); text-transform: capitalize; }
+.lu-list-head { margin-top: 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.lu-auto { background: none; border: 1px solid var(--border); color: var(--yellow); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 13px; }
+.lu-list { margin-top: 8px; display: grid; gap: 6px; }
+.lu-row {
+  display: grid; grid-template-columns: 22px 40px minmax(0, 1fr) auto 64px 50px; align-items: center; gap: 8px;
+  padding: 4px 10px; border-radius: 8px; cursor: pointer; text-align: left;
+  background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-family: 'Rajdhani', sans-serif; font-size: 14px;
+}
+.lu-row.on { border-color: rgba(255,215,0,0.6); background: rgba(255,215,0,0.05); }
+.lu-check { width: 20px; height: 20px; border-radius: 4px; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; color: #000; font-weight: 700; }
+.lu-row.on .lu-check { background: var(--yellow); border-color: var(--yellow); }
+.lu-row img { width: 40px; height: 40px; image-rendering: pixelated; }
+.lu-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lu-types { display: flex; gap: 3px; }
+.lu-bst { color: var(--muted); font-size: 13px; }
+
 /* ═══════════════════════════════════════
    MOBILE RESPONSIVE  (≤ 640px)
    ═══════════════════════════════════════ */
@@ -3003,6 +3130,29 @@ details.season-week.next .sw-upcoming { color: var(--yellow); font-weight: 700; 
   .fa-bottom-status { display: none; }
   .draft-toast.above-bar { bottom: 70px; }
 
+  /* ── Match screen on phones ── */
+  #matchOverlay { padding: 8px; align-items: flex-start; }
+  .match-modal { max-height: calc(100vh - 16px); }
+  .match-body { padding: 10px; }
+  .match-body .mp-actions { bottom: -10px; margin: 10px -10px -10px; padding: 10px; }
+  .mp-cols, .mr-row { grid-template-columns: minmax(0, 1fr) 22px minmax(0, 1fr); gap: 4px; }
+  .mp-cols { grid-template-columns: 1fr; }
+  .mp-cols .mp-vs { min-height: 16px; }
+  .mp-roster img { width: 36px; height: 36px; }
+  .mk-row { grid-template-columns: 1fr; gap: 10px; }
+  .mk-them { flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .mk-them .mk-label { flex-basis: 100%; }
+  .mk-them .mf-card { flex-direction: row; gap: 8px; flex: 1; }
+  .mk-them .mf-card img { width: 56px; height: 56px; }
+  .mk-options { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .mf-card img, .mr-side .mf-card img { width: 64px; height: 64px; }
+  .mf-name { font-size: 14px; }
+  .mp-actions button { flex: 1; }
+  .lu-row { grid-template-columns: 20px 32px minmax(0, 1fr) 46px; }
+  .lu-types, .lu-bst { display: none; }
+  .lu-row img { width: 32px; height: 32px; }
+  .mgr-toggle { font-size: 12px; }
+
   /* ── Battle viewer on phones ── */
   .bp-scoreboard { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) 32px; gap: 6px; padding: 10px; }
   .bps-team { font-size: 13px; gap: 4px; }
@@ -3039,7 +3189,9 @@ details.season-week.next .sw-upcoming { color: var(--yellow); font-weight: 700; 
     padding: 8px 0 10px; gap: 6px;
   }
   .season-bottom-status { display: none; }
-  .season-bottom-actions { width: 100%; flex-wrap: nowrap; }
+  .season-bottom-actions { width: 100%; flex-wrap: wrap; }
+  .season-bottom-actions .mgr-toggle { flex: 1 1 45%; justify-content: center; }
+  .season-bottom-actions .btn-lineup { flex: 1 1 45% !important; }
   .season-bottom-actions .btn-season-primary,
   .season-bottom-actions .btn-season-secondary,
   .season-bottom-actions .btn-season-continue { width: auto; flex: 1; padding: 12px 8px; font-size: 8px; }

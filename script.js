@@ -130,6 +130,8 @@ let lastHumanPick = null;     // { teamIdx, pokeId } — enables a one-step undo
 let undoToastTimer = null;
 let cpuPickTimer = null;
 let simulatingDraft = false;   // true while "Sim rest of draft" makes picks in bulk
+let match = null;              // the hand-played game in progress (manager mode)
+let lineupDraft = null;        // { teamIdx, activeIds } while the lineup modal is open
 // CPU pacing: [base ms, random extra ms] per action, plus how long Undo stays open.
 const CPU_SPEEDS = {
   normal:  { label: 'Normal',  draft: [800, 800], freeAgency: [650, 650], undo: 5000 },
@@ -903,7 +905,28 @@ function bestTypeMultiplier(attacker, defender) {
     .sort((a, b) => b.multiplier - a.multiplier)[0];
 }
 
-function skirmishStatScore(poke, typeMultiplier) {
+// ── Game plans (manager mode only) ──
+// A small, centred nudge: an average Pokémon is unaffected; strong attackers
+// gain under Aggressive, bulky ones under Defensive. A few points against a
+// ±27.5 roll, so it tilts skirmishes without deciding them.
+const GAME_PLANS = {
+  aggressive: { label: 'Aggressive', icon: '⚔', blurb: 'Hit hard and fast — rewards high Attack and Speed.' },
+  balanced:   { label: 'Balanced',   icon: '⚖', blurb: 'No adjustments — play the matchups straight.' },
+  defensive:  { label: 'Defensive',  icon: '🛡', blurb: 'Wear them down — rewards high HP and defences.' },
+};
+
+function planBonus(poke, plan) {
+  if (plan === 'aggressive') return clamp(0.08 * (pokemonAttackScore(poke) - 90) + 0.06 * ((poke?.stats?.speed ?? 0) - 80), -6, 6);
+  if (plan === 'defensive') return clamp(0.05 * (pokemonBulkScore(poke) - 240), -6, 6);
+  return 0;
+}
+
+function cpuGamePlan(team) {
+  return { power: 'aggressive', speed: 'aggressive', bulky: 'defensive' }[cpuPersonalityKey(team)] ?? 'balanced';
+}
+
+function skirmishStatScore(poke, typeMultiplier, plan = null) {
+  if (plan) return skirmishStatScore(poke, typeMultiplier) + planBonus(poke, plan);
   const bestAttack = Math.max(poke?.stats?.attack ?? 0, poke?.stats?.['special-attack'] ?? 0);
   const bulk = (poke?.stats?.hp ?? 0) + (poke?.stats?.defense ?? 0) + (poke?.stats?.['special-defense'] ?? 0);
   const speed = poke?.stats?.speed ?? 0;
@@ -946,11 +969,11 @@ function skirmishReason(winnerPoke, loserPoke, winnerType, loserType, winnerScor
   }
 }
 
-function simulateSkirmish(pokeA, pokeB, teamAIdx, teamBIdx, setNumber) {
+function simulateSkirmish(pokeA, pokeB, teamAIdx, teamBIdx, setNumber, planA = null, planB = null) {
   const typeA = bestTypeMultiplier(pokeA, pokeB);
   const typeB = bestTypeMultiplier(pokeB, pokeA);
-  const baseA = skirmishStatScore(pokeA, typeA.multiplier);
-  const baseB = skirmishStatScore(pokeB, typeB.multiplier);
+  const baseA = skirmishStatScore(pokeA, typeA.multiplier, planA);
+  const baseB = skirmishStatScore(pokeB, typeB.multiplier, planB);
   const rollA = baseA + (Math.random() - 0.5) * 55;
   const rollB = baseB + (Math.random() - 0.5) * 55;
   const winnerIdx = rollA >= rollB ? teamAIdx : teamBIdx;
@@ -1016,6 +1039,47 @@ function simulateSets(game) {
     lineupA: rosterA.map(p => p.id),
     lineupB: rosterB.map(p => p.id),
   };
+}
+
+// Chance that pokeA beats pokeB: each side rolls ±27.5, so the roll
+// difference is triangular on [-55, 55].
+function skirmishWinChance(pokeA, pokeB, planA = null, planB = null) {
+  const d = skirmishStatScore(pokeA, bestTypeMultiplier(pokeA, pokeB).multiplier, planA)
+    - skirmishStatScore(pokeB, bestTypeMultiplier(pokeB, pokeA).multiplier, planB);
+  const w = 55;
+  const x = -d;   // A wins when the roll difference is at least -d
+  const cdf = x <= -w ? 0 : x >= w ? 1 : x < 0 ? (x + w) ** 2 / (2 * w * w) : 1 - (w - x) ** 2 / (2 * w * w);
+  return clamp(1 - cdf, 0, 1);
+}
+
+// CPU commits its fighter without seeing yours: one of its two strongest
+// remaining, weighted toward the best.
+function cpuChooseFighter(remaining, plan) {
+  const ranked = [...remaining].sort((a, b) => skirmishStatScore(b, 1, plan) - skirmishStatScore(a, 1, plan));
+  return ranked.length > 1 && Math.random() < 0.3 ? ranked[1] : ranked[0];
+}
+
+// Store a hand-played game in the same shape simulateGame() produces, so
+// standings, battle logs and the viewer all work unchanged.
+function finalizeManagedGame(game, sets, lineupA, lineupB, plans) {
+  const score = matchupScore(teams[game.teamAIdx], teams[game.teamBIdx]);
+  const winsA = sets.filter(set => set.winnerIdx === game.teamAIdx).length;
+  const winsB = sets.length - winsA;
+  game.matchup = compactMatchupProfile(score.matchup);
+  game.matchupScore = compactMatchupScore(score);
+  game.ratingA = score.ratingA;
+  game.ratingB = score.ratingB;
+  game.sets = sets;
+  game.lineupA = lineupA;
+  game.lineupB = lineupB;
+  game.plans = plans;
+  game.managed = true;
+  game.scoreA = winsA;
+  game.scoreB = winsB;
+  game.winnerIdx = winsA > winsB ? game.teamAIdx : game.teamBIdx;
+  game.battleLog = generateBattleLog(game, score, game.winnerIdx);
+  game.simulated = true;
+  return game;
 }
 
 function generateSetBattleLog(game, score, winnerIdx) {
@@ -4927,6 +4991,508 @@ function renderBattlePlayback(animateHp = false) {
   renderBattleControls();
 }
 
+// ── Manager mode: play your own games ──
+function managerModeOn() {
+  return loadPrefs().managerMode !== false;
+}
+
+function setManagerMode(on) {
+  savePrefs({ managerMode: Boolean(on) });
+  syncManagerControls();
+}
+
+function syncManagerControls() {
+  const on = managerModeOn();
+  document.querySelectorAll('.manager-toggle').forEach(box => { box.checked = on; });
+  const select = document.getElementById('setupManagerMode');
+  if (select) select.value = on ? 'manager' : 'auto';
+  const anyHuman = teams.some(team => !team.isCpu);
+  document.querySelectorAll('.mgr-toggle, .btn-lineup').forEach(el => { el.hidden = !anyHuman; });
+}
+
+function isManagedGame(game) {
+  return managerModeOn() && (!teams[game.teamAIdx]?.isCpu || !teams[game.teamBIdx]?.isCpu);
+}
+
+function matchContextLabel(game) {
+  if (Number.isInteger(game.week)) return `Week ${game.week}`;
+  return game.label ?? 'Playoffs';
+}
+
+// Play `games` one after another in the match screen, then call onDone.
+function startMatchQueue(games, onDone) {
+  match = { queue: [...games], onDone };
+  nextQueuedMatch();
+}
+
+function nextQueuedMatch() {
+  const game = match?.queue.shift();
+  if (!game) {
+    const done = match?.onDone;
+    match = null;
+    document.getElementById('matchOverlay').style.display = 'none';
+    done?.();
+    return;
+  }
+  const a = teams[game.teamAIdx];
+  const b = teams[game.teamBIdx];
+  Object.assign(match, {
+    game,
+    phase: 'plan',
+    plans: { A: a.isCpu ? cpuGamePlan(a) : 'balanced', B: b.isCpu ? cpuGamePlan(b) : 'balanced' },
+    sets: [],
+    picks: { A: null, B: null },
+    selected: null,
+  });
+  document.getElementById('matchOverlay').style.display = 'flex';
+  renderMatch();
+}
+
+function matchSide(side) {
+  return teams[side === 'A' ? match.game.teamAIdx : match.game.teamBIdx];
+}
+
+function matchWins(side) {
+  const idx = side === 'A' ? match.game.teamAIdx : match.game.teamBIdx;
+  return match.sets.filter(set => set.winnerIdx === idx).length;
+}
+
+function setMatchPlan(side, plan) {
+  if (!match || match.phase !== 'plan' || !GAME_PLANS[plan] || matchSide(side).isCpu) return;
+  match.plans[side] = plan;
+  renderMatch();
+}
+
+function startMatch() {
+  if (!match || match.phase !== 'plan') return;
+  const rosterA = getActiveRoster(matchSide('A'));
+  const rosterB = getActiveRoster(matchSide('B'));
+  if (!rosterA.length || !rosterB.length) {
+    autoSimMatch();
+    return;
+  }
+  match.lineupA = rosterA.map(p => p.id);
+  match.lineupB = rosterB.map(p => p.id);
+  match.remaining = { A: [...rosterA], B: [...rosterB] };
+  beginSkirmish();
+}
+
+// Who commits first alternates each skirmish, so neither side always gets
+// to counter. Against a CPU: odd skirmishes it reveals first, even ones you
+// commit first and it counter-picks. (Measured: a player who always takes
+// the best matchup wins ~60% of even games, vs 50% auto-simmed.)
+function matchOrder() {
+  const n = match.sets.length + 1;
+  const cpuA = matchSide('A').isCpu;
+  const cpuB = matchSide('B').isCpu;
+  if (cpuA !== cpuB) {
+    const cpu = cpuA ? 'A' : 'B';
+    const human = cpuA ? 'B' : 'A';
+    return n % 2 ? [cpu, human] : [human, cpu];
+  }
+  return n % 2 ? ['A', 'B'] : ['B', 'A'];
+}
+
+function matchPicker() {
+  const next = matchOrder().find(side => !match.picks[side]);
+  return next && !matchSide(next).isCpu ? next : null;
+}
+
+// Fill in CPU picks that are due (a CPU picking second counters the
+// revealed fighter), stopping when a human needs to choose.
+function advanceMatchPicks() {
+  for (const side of matchOrder()) {
+    if (match.picks[side]) continue;
+    if (!matchSide(side).isCpu) { renderMatch(); return; }
+    const other = side === 'A' ? 'B' : 'A';
+    const revealed = match.picks[other];
+    match.picks[side] = revealed
+      ? [...match.remaining[side]].sort((x, y) =>
+          skirmishWinChance(y, revealed, match.plans[side], match.plans[other]) - skirmishWinChance(x, revealed, match.plans[side], match.plans[other]))[0]
+      : cpuChooseFighter(match.remaining[side], match.plans[side]);
+  }
+  resolveSkirmish();
+}
+
+function beginSkirmish() {
+  match.picks = { A: null, B: null };
+  match.selected = null;
+  match.phase = 'pick';
+  advanceMatchPicks();
+}
+
+function selectMatchFighter(id) {
+  if (!match || match.phase !== 'pick') return;
+  match.selected = id;
+  renderMatch();
+}
+
+function confirmMatchFighter() {
+  const side = match && match.phase === 'pick' ? matchPicker() : null;
+  if (!side) return;
+  const poke = match.remaining[side].find(p => p.id === match.selected);
+  if (!poke) return;
+  match.picks[side] = poke;
+  match.selected = null;
+  advanceMatchPicks();
+}
+
+function resolveSkirmish() {
+  const { game, picks, plans } = match;
+  const set = simulateSkirmish(picks.A, picks.B, game.teamAIdx, game.teamBIdx, match.sets.length + 1, plans.A, plans.B);
+  match.sets.push(set);
+  match.remaining.A = match.remaining.A.filter(p => p.id !== picks.A.id);
+  match.remaining.B = match.remaining.B.filter(p => p.id !== picks.B.id);
+  match.phase = 'result';
+  renderMatch(true);
+}
+
+function matchIsDecided() {
+  return matchWins('A') >= 3 || matchWins('B') >= 3 || !match.remaining.A.length || !match.remaining.B.length || match.sets.length >= 5;
+}
+
+function continueMatch() {
+  if (!match || match.phase !== 'result') return;
+  if (matchIsDecided()) finishMatch();
+  else beginSkirmish();
+}
+
+function finishMatch() {
+  finalizeManagedGame(match.game, match.sets, match.lineupA, match.lineupB, { ...match.plans });
+  match.phase = 'final';
+  renderMatch();
+}
+
+// ✕ / "Auto-sim": finish this game without more input. Before kickoff it's
+// a normal simulation; mid-game your remaining picks are made for you.
+function autoSimMatch() {
+  if (!match) return;
+  if (match.phase === 'plan') {
+    simulateGame(match.game);
+    match.phase = 'final';
+    renderMatch();
+    return;
+  }
+  if (match.phase === 'final') {
+    nextQueuedMatch();
+    return;
+  }
+  for (let guard = 0; guard < 10 && match.phase !== 'final'; guard++) {
+    if (match.phase === 'pick') {
+      ['A', 'B'].forEach(side => {
+        if (!match.picks[side]) {
+          match.picks[side] = [...match.remaining[side]].sort((x, y) => skirmishStatScore(y, 1, match.plans[side]) - skirmishStatScore(x, 1, match.plans[side]))[0];
+        }
+      });
+      resolveSkirmish();
+    }
+    if (match.phase === 'result') {
+      if (matchIsDecided()) finishMatch();
+      else beginSkirmish();
+    }
+  }
+}
+
+function matchTeamWeakTypes(roster, count = 3) {
+  return Object.keys(TYPE_CHART)
+    .map(type => ({ type, mult: average(roster.map(p => typeEffectiveness(type, p.types ?? []))) }))
+    .filter(entry => entry.mult > 1.05)
+    .sort((x, y) => y.mult - x.mult)
+    .slice(0, count)
+    .map(entry => entry.type);
+}
+
+function matchFighterCard(poke, opts = {}) {
+  const { chance = null, extra = '', selected = false, onclick = '', label = '', side = '' } = opts;
+  const tone = chance === null ? '' : chance >= 0.6 ? 'good' : chance <= 0.4 ? 'bad' : 'even';
+  return `
+    <${onclick ? 'button type="button"' : 'div'} class="mf-card${selected ? ' selected' : ''}${side ? ` side-${side}` : ''}"${onclick ? ` onclick="${onclick}" aria-pressed="${selected}"` : ''}>
+      ${label ? `<span class="mf-label">${label}</span>` : ''}
+      <img src="${poke.sprite || pokemonSpriteUrl(poke.id)}" alt="" onerror="this.style.visibility='hidden'">
+      <span class="mf-name">${pokemonDisplayName(poke)}</span>
+      <span class="mf-types">${typePills(poke.types ?? [])}</span>
+      <span class="mf-stats">BST ${poke.bst} · Spe ${poke.stats?.speed ?? '?'}</span>
+      ${chance !== null ? `<span class="mf-chance ${tone}">${Math.round(chance * 100)}% win</span>` : ''}
+      ${extra}
+    </${onclick ? 'button' : 'div'}>`;
+}
+
+function matchPartyRow(side) {
+  const lineup = side === 'A' ? match.lineupA : match.lineupB;
+  if (!lineup) return '';
+  const idx = side === 'A' ? match.game.teamAIdx : match.game.teamBIdx;
+  return `<div class="bp-party">${lineup.map(id => {
+    const set = match.sets.find(st => (side === 'A' ? st.pokemonAId : st.pokemonBId) === id);
+    const won = set && set.winnerIdx === idx;
+    const fainted = set && !won;
+    const poke = bpPokemon(id);
+    return `<span class="bp-mon${fainted ? ' fainted' : ''}${won ? ' won' : ''}" title="${pokemonDisplayName(poke ?? { name: '#' + id })}"><img src="${pokemonSpriteUrl(id)}" alt="" onerror="this.style.visibility='hidden'">${won ? '<b>✓</b>' : ''}</span>`;
+  }).join('')}</div>`;
+}
+
+function renderMatch(animateHp = false) {
+  const modal = document.getElementById('matchModal');
+  if (!modal || !match?.game) return;
+  const { game, phase } = match;
+  const A = matchSide('A');
+  const B = matchSide('B');
+  const winsA = matchWins('A');
+  const winsB = matchWins('B');
+  const pips = (n, color) => Array.from({ length: 3 }, (_, i) => `<i class="${i < n ? 'on' : ''}" style="--team:${color}"></i>`).join('');
+  const header = `
+    <div class="bp-scoreboard">
+      <div class="bps-team a"><span class="battle-team-dot" style="background:${A.color}"></span><span class="bps-name">${A.name}</span>${youTagHtml(game.teamAIdx)}<span class="bps-pips">${pips(winsA, A.color)}</span></div>
+      <div class="bps-score"><strong id="matchTitle">${winsA} — ${winsB}</strong><span>${matchContextLabel(game)} · ${phase === 'plan' ? 'game plan' : phase === 'final' ? 'final' : `skirmish ${match.sets.length + (phase === 'pick' ? 1 : 0)}`} · first to 3</span></div>
+      <div class="bps-team b"><span class="bps-pips">${pips(winsB, B.color)}</span>${youTagHtml(game.teamBIdx)}<span class="bps-name">${B.name}</span><span class="battle-team-dot" style="background:${B.color}"></span></div>
+      <button class="bps-close" onclick="autoSimMatch()" title="${phase === 'final' ? 'Continue' : 'Auto-sim the rest of this game'}" aria-label="${phase === 'final' ? 'Continue' : 'Auto-sim the rest of this game'}">${phase === 'final' ? '→' : '⏩'}</button>
+    </div>`;
+  let body = '';
+
+  if (phase === 'plan') {
+    const score = matchupScore(A, B);
+    const sideCol = (side) => {
+      const team = matchSide(side);
+      const idx = side === 'A' ? game.teamAIdx : game.teamBIdx;
+      const roster = getActiveRoster(team);
+      const weak = matchTeamWeakTypes(roster);
+      const plan = match.plans[side];
+      return `
+        <div class="mp-col">
+          <div class="mp-team"><span class="battle-team-dot" style="background:${team.color}"></span>${team.name}${youTagHtml(idx)} <span class="mp-odds">${Math.round((side === 'A' ? score.chanceA : score.chanceB) * 100)}%</span></div>
+          <div class="mp-roster">${roster.map(p => `<img src="${p.sprite || pokemonSpriteUrl(p.id)}" alt="${p.name}" title="${pokemonDisplayName(p)} · BST ${p.bst}" onerror="this.style.visibility='hidden'">`).join('')}</div>
+          <div class="mp-weak">Weak to: ${weak.length ? weak.map(t => `<span class="type-pill" style="background:${TYPE_COLORS[t]};color:${isLight(TYPE_COLORS[t]) ? '#000' : '#fff'}">${t}</span>`).join(' ') : '<em>no clear weakness</em>'}</div>
+          ${team.isCpu
+            ? `<div class="mp-cpu-plan">Game plan: <strong>${GAME_PLANS[plan].icon} ${GAME_PLANS[plan].label}</strong></div>`
+            : `<div class="mp-plans" role="radiogroup" aria-label="${team.name} game plan">${Object.entries(GAME_PLANS).map(([key, p]) => `
+                <button type="button" class="mp-plan${plan === key ? ' on' : ''}" role="radio" aria-checked="${plan === key}" onclick="setMatchPlan('${side}', '${key}')">
+                  <strong>${p.icon} ${p.label}</strong><span>${p.blurb}</span></button>`).join('')}</div>
+               <button type="button" class="mp-lineup-link" onclick="openLineupModal(${idx})">Edit lineup &amp; scouting</button>`}
+        </div>`;
+    };
+    body = `
+      <div class="mp-cols">${sideCol('A')}<div class="mp-vs">VS</div>${sideCol('B')}</div>
+      <div class="mp-how">You'll choose a fighter for each skirmish from your six — each Pokémon fights once. ${!A.isCpu && !B.isCpu
+        ? 'Teams take turns choosing first; the second team sees the first pick.'
+        : 'Turns alternate: in odd skirmishes the CPU reveals its fighter first; in even ones you commit first and it counter-picks.'}</div>
+      <div class="mp-actions">
+        <button class="dc-cancel" onclick="autoSimMatch()">Auto-sim this game</button>
+        <button class="dc-confirm" onclick="startMatch()">Start match ▶</button>
+      </div>`;
+  } else if (phase === 'pick') {
+    const side = matchPicker();
+    const other = side === 'A' ? 'B' : 'A';
+    const me = matchSide(side);
+    const them = matchSide(other);
+    const theirPick = match.picks[other];
+    const options = match.remaining[side]
+      .map(p => ({ p, chance: theirPick ? skirmishWinChance(p, theirPick, match.plans[side], match.plans[other]) : average(match.remaining[other].map(q => skirmishWinChance(p, q, match.plans[side], match.plans[other]))) }))
+      .sort((x, y) => y.chance - x.chance);
+    const best = options[0]?.p.id;
+    const selected = options.find(o => o.p.id === match.selected);
+    const typeText = (p) => {
+      if (!theirPick) return '';
+      const mine = bestTypeMultiplier(p, theirPick);
+      const theirs = bestTypeMultiplier(theirPick, p);
+      return `<span class="mf-type">You ${playbackMultiplierText(mine.multiplier)} · Them ${playbackMultiplierText(theirs.multiplier)}</span>`;
+    };
+    body = `
+      <div class="mk-row">
+        <div class="mk-them">
+          <div class="mk-label">${theirPick ? `${them.name} send out…` : `${them.name} ${them.isCpu ? 'will counter-pick' : 'choose after you'}`}</div>
+          ${theirPick ? matchFighterCard(theirPick, { side: other }) : `<div class="mf-card mf-hidden"><span class="mf-q">?</span><span class="mf-name">Hidden</span></div>`}
+          ${matchPartyRow(other)}
+        </div>
+        <div class="mk-mine">
+          <div class="mk-label"><span class="battle-team-dot" style="background:${me.color}"></span> ${possessive(me.name)} pick${theirPick ? '' : ' — chances are averaged over their remaining Pokémon'}</div>
+          <div class="mk-options">
+            ${options.map(({ p, chance }) => matchFighterCard(p, {
+              chance, selected: p.id === match.selected, onclick: `selectMatchFighter(${p.id})`,
+              label: p.id === best ? 'Best matchup' : '', extra: typeText(p),
+            })).join('')}
+          </div>
+          ${matchPartyRow(side)}
+        </div>
+      </div>
+      <div class="mp-actions">
+        <button class="dc-cancel" onclick="autoSimMatch()">Auto-sim rest</button>
+        <button class="dc-confirm" id="matchSendBtn" onclick="confirmMatchFighter()"${selected ? '' : ' disabled'}>${selected ? `Send out <span class="dc-poke-name">${selected.p.name}</span> (${Math.round(selected.chance * 100)}%)` : 'Choose a fighter'}</button>
+      </div>`;
+  } else if (phase === 'result') {
+    const set = match.sets[match.sets.length - 1];
+    const step = { ...set, rollA: set.scoreA, rollB: set.scoreB, teamAIdx: game.teamAIdx, teamBIdx: game.teamBIdx };
+    const card = (side) => {
+      const poke = side === 'A' ? match.picks.A : match.picks.B;
+      const idx = side === 'A' ? game.teamAIdx : game.teamBIdx;
+      const won = set.winnerIdx === idx;
+      const hp = playbackHpPercent(step, side);
+      return `<div class="mr-side${won ? ' winner' : ' loser'}">
+        ${matchFighterCard(poke, { side })}
+        <div class="battle-hp"><span>HP</span><i><b class="hp-${hp > 50 ? 'high' : hp > 20 ? 'mid' : 'low'}" data-hp="${hp}" style="width:100%"></b></i></div>
+        <div class="battle-result-tag">${won ? 'Wins skirmish' : 'Faints'}</div>
+      </div>`;
+    };
+    const effect = playbackEffectText(step, game);
+    const decided = matchIsDecided();
+    body = `
+      <div class="mr-row">${card('A')}<div class="mp-vs">VS</div>${card('B')}</div>
+      ${effect.text ? `<div class="battle-playback-effect ${effect.tone}">${effect.text}</div>` : ''}
+      <div class="battle-playback-text">${set.reason}</div>
+      <div class="mp-actions single"><button class="dc-confirm" onclick="continueMatch()">${decided ? 'See result ▶' : `Next skirmish (${match.sets.length + 1}) ▶`}</button></div>`;
+  } else {
+    const winner = teams[game.winnerIdx];
+    const youIdx = soleHumanTeamIdx();
+    const youWon = youIdx !== null && game.winnerIdx === youIdx;
+    const youLost = youIdx !== null && !youWon && (game.teamAIdx === youIdx || game.teamBIdx === youIdx);
+    body = `
+      <div class="bp-final" style="--team:${winner.color}">
+        <div class="bp-final-kicker">${youWon ? 'Victory!' : youLost ? 'Defeat' : 'Final'}${gameIsUpset(game) ? ' · Upset' : ''}</div>
+        <div class="bp-final-title"><span style="color:${winner.color}">${winner.name}</span> win ${Math.max(game.scoreA, game.scoreB)}–${Math.min(game.scoreA, game.scoreB)}</div>
+        ${game.plans ? `<div class="bp-final-sub">${A.name}: ${GAME_PLANS[game.plans.A]?.label ?? '—'} · ${B.name}: ${GAME_PLANS[game.plans.B]?.label ?? '—'}</div>` : ''}
+        <div class="bp-final-sets">${(game.sets ?? []).map(set => `<span class="bp-final-set" style="--team:${teams[set.winnerIdx]?.color ?? '#888'}">${set.setNumber} · ${pokemonDisplayName({ name: set.winnerPokemonName })}</span>`).join('')}</div>
+        <div class="bp-final-actions single"><button class="champ-btn primary" id="matchContinueBtn" onclick="nextQueuedMatch()">${match.queue.length ? 'Next game ▶' : 'Continue'}</button></div>
+      </div>`;
+  }
+
+  modal.innerHTML = header + `<div class="match-body phase-${phase}">${body}</div>`;
+  const bars = modal.querySelectorAll('.battle-hp b');
+  if (animateHp && !prefersReducedMotion()) {
+    requestAnimationFrame(() => requestAnimationFrame(() => bars.forEach(bar => { bar.style.width = `${bar.dataset.hp}%`; })));
+  } else {
+    bars.forEach(bar => { bar.style.transition = 'none'; bar.style.width = `${bar.dataset.hp}%`; });
+  }
+}
+
+// ── Lineup & scouting ──
+// The next unplayed game for a team in the current phase (season or playoffs).
+function nextGameFor(teamIdx) {
+  const inPlayoffs = document.getElementById('playoffScreen')?.style.display === 'flex';
+  const pool = inPlayoffs ? getCurrentPlayoffGames().filter(isPlayoffGameReady) : getCurrentDraftSchedule();
+  return pool.find(game => !game.simulated && (game.teamAIdx === teamIdx || game.teamBIdx === teamIdx)) ?? null;
+}
+
+function openLineupModal(teamIdx = null) {
+  const humans = teams.map((team, idx) => (team.isCpu ? null : idx)).filter(idx => idx !== null);
+  if (!humans.length) return;
+  const idx = Number.isInteger(teamIdx) && humans.includes(teamIdx) ? teamIdx : humans[0];
+  lineupDraft = { teamIdx: idx, activeIds: [...getActiveRosterIds(teams[idx])] };
+  renderLineupModal();
+  document.getElementById('lineupOverlay').classList.add('visible');
+}
+
+function closeLineupModal() {
+  lineupDraft = null;
+  document.getElementById('lineupOverlay')?.classList.remove('visible');
+}
+
+function switchLineupTeam(value) {
+  openLineupModal(Number(value));
+}
+
+function toggleLineupPick(id) {
+  if (!lineupDraft) return;
+  const ids = lineupDraft.activeIds;
+  if (ids.includes(id)) lineupDraft.activeIds = ids.filter(x => x !== id);
+  else if (ids.length < ACTIVE_ROSTER_SIZE) lineupDraft.activeIds = [...ids, id];
+  renderLineupModal();
+}
+
+// Average chance to win a skirmish against each Pokémon in the opponent's six.
+function lineupMatchupScores(team, oppTeam) {
+  const oppRoster = oppTeam ? getActiveRoster(oppTeam) : [];
+  return team.picks.map(p => ({
+    poke: p,
+    chance: oppRoster.length ? average(oppRoster.map(q => skirmishWinChance(p, q))) : null,
+  }));
+}
+
+function bestLineupVsOpponent() {
+  if (!lineupDraft) return;
+  const team = teams[lineupDraft.teamIdx];
+  const game = nextGameFor(lineupDraft.teamIdx);
+  const opp = game ? teams[game.teamAIdx === lineupDraft.teamIdx ? game.teamBIdx : game.teamAIdx] : null;
+  const scored = lineupMatchupScores(team, opp)
+    .sort((a, b) => (b.chance ?? 0) - (a.chance ?? 0) || pokemonPower(b.poke) - pokemonPower(a.poke));
+  lineupDraft.activeIds = scored.slice(0, ACTIVE_ROSTER_SIZE).map(entry => entry.poke.id);
+  renderLineupModal();
+}
+
+function saveLineup() {
+  if (!lineupDraft) return;
+  const team = teams[lineupDraft.teamIdx];
+  if (lineupDraft.activeIds.length !== Math.min(ACTIVE_ROSTER_SIZE, team.picks.length)) return;
+  setActiveRoster(team, lineupDraft.activeIds);
+  closeLineupModal();
+  const inPlayoffs = document.getElementById('playoffScreen')?.style.display === 'flex';
+  saveSeason(buildSeasonState(inPlayoffs ? SEASON_PHASES.PLAYOFFS : SEASON_PHASES.REGULAR_SEASON, 'complete'));
+  if (match?.phase === 'plan') renderMatch();
+  if (inPlayoffs) renderPlayoffScreen(); else if (document.getElementById('seasonScreen')?.style.display === 'flex') renderSeasonScreen();
+}
+
+function renderLineupModal() {
+  const modal = document.getElementById('lineupModal');
+  if (!modal || !lineupDraft) return;
+  const idx = lineupDraft.teamIdx;
+  const team = teams[idx];
+  const humans = teams.map((t, i) => (t.isCpu ? null : i)).filter(i => i !== null);
+  const game = nextGameFor(idx);
+  const oppIdx = game ? (game.teamAIdx === idx ? game.teamBIdx : game.teamAIdx) : null;
+  const opp = oppIdx !== null ? teams[oppIdx] : null;
+  const oppRoster = opp ? getActiveRoster(opp) : [];
+  const threats = [...oppRoster].sort((a, b) => pokemonPower(b) - pokemonPower(a)).slice(0, 2);
+  const weak = matchTeamWeakTypes(oppRoster);
+  const needed = Math.min(ACTIVE_ROSTER_SIZE, team.picks.length);
+  const scores = lineupMatchupScores(team, opp)
+    .sort((a, b) => (b.chance ?? 0) - (a.chance ?? 0) || pokemonPower(b.poke) - pokemonPower(a.poke));
+  const count = lineupDraft.activeIds.length;
+  const pill = t => `<span class="type-pill" style="background:${TYPE_COLORS[t]};color:${isLight(TYPE_COLORS[t]) ? '#000' : '#fff'}">${t}</span>`;
+
+  modal.innerHTML = `
+    <div class="lu-head">
+      <div>
+        <div class="dc-kicker">Lineup &amp; scouting</div>
+        <div class="lu-title" id="lineupTitle">${humans.length > 1
+          ? `<select onchange="switchLineupTeam(this.value)">${humans.map(i => `<option value="${i}"${i === idx ? ' selected' : ''}>${teams[i].name}</option>`).join('')}</select>`
+          : team.name}</div>
+      </div>
+      <button class="bps-close" onclick="closeLineupModal()" aria-label="Close">✕</button>
+    </div>
+    ${opp ? `
+      <div class="lu-scout" style="--team:${opp.color}">
+        <div class="lu-scout-title">Next: ${matchContextLabel(game)} vs <strong style="color:${opp.color}">${opp.name}</strong>${opp.isCpu ? ` · plan ${GAME_PLANS[cpuGamePlan(opp)].icon} ${GAME_PLANS[cpuGamePlan(opp)].label}` : ''}</div>
+        <div class="lu-scout-row">
+          <div class="mp-roster">${oppRoster.map(p => `<img src="${p.sprite || pokemonSpriteUrl(p.id)}" alt="${p.name}" title="${pokemonDisplayName(p)} · ${(p.types ?? []).join('/')} · BST ${p.bst}" onerror="this.style.visibility='hidden'">`).join('')}</div>
+          <div class="lu-scout-notes">
+            <div>Biggest threats: ${threats.map(p => `<strong>${pokemonDisplayName(p)}</strong>`).join(', ') || '—'}</div>
+            <div>Weak to: ${weak.length ? weak.map(pill).join(' ') : '<em>no clear weakness</em>'}</div>
+          </div>
+        </div>
+      </div>` : '<div class="lu-scout"><div class="lu-scout-title">No upcoming game to scout right now.</div></div>'}
+    <div class="lu-list-head">
+      <span>${count}/${needed} active${opp ? ` · % = average skirmish win chance vs ${opp.name}` : ''}</span>
+      ${opp ? '<button type="button" class="lu-auto" onclick="bestLineupVsOpponent()">Auto-pick best 6 vs them</button>' : ''}
+    </div>
+    <div class="lu-list">
+      ${scores.map(({ poke, chance }) => {
+        const on = lineupDraft.activeIds.includes(poke.id);
+        const tone = chance === null ? '' : chance >= 0.55 ? 'good' : chance <= 0.45 ? 'bad' : 'even';
+        return `
+          <button type="button" class="lu-row${on ? ' on' : ''}" onclick="toggleLineupPick(${poke.id})" aria-pressed="${on}">
+            <span class="lu-check">${on ? '✓' : ''}</span>
+            <img src="${poke.sprite || pokemonSpriteUrl(poke.id)}" alt="" onerror="this.style.visibility='hidden'">
+            <span class="lu-name">${pokemonDisplayName(poke)}</span>
+            <span class="lu-types">${typePills(poke.types ?? [])}</span>
+            <span class="lu-bst">BST ${poke.bst}</span>
+            ${chance !== null ? `<span class="mf-chance ${tone}">${Math.round(chance * 100)}%</span>` : '<span></span>'}
+          </button>`;
+      }).join('')}
+    </div>
+    <div class="dc-actions">
+      <button class="dc-cancel" onclick="closeLineupModal()">Cancel</button>
+      <button class="dc-confirm" onclick="saveLineup()"${count === needed ? '' : ' disabled'}>${count === needed ? 'Save lineup' : `Choose ${needed - count > 0 ? needed - count + ' more' : count - needed + ' fewer'}`}</button>
+    </div>
+  `;
+}
+
 // ── Regular Season ──
 function showSeasonScreen() {
   document.getElementById('draftScreen').style.display = 'none';
@@ -4940,6 +5506,7 @@ function showSeasonScreen() {
   const gen = GENS[currentGenIdx];
   setPhaseTracker('season');
   hidePickAnnouncement();
+  syncManagerControls();
   ensureActiveRosters();
   ensureRegularSeasonSchedule();
   syncSeason(SEASON_PHASES.REGULAR_SEASON, 'complete');
@@ -5153,18 +5720,29 @@ function renderSeasonLeaders(schedule) {
   `;
 }
 
+function finishSeasonWeek() {
+  syncRegularSeasonResults();
+  renderSeasonScreen();
+  saveSeason(buildSeasonState(SEASON_PHASES.REGULAR_SEASON, 'complete'));
+}
+
+// CPU games simulate instantly; in manager mode your games open the match screen.
 function simulateNextWeek() {
+  if (match) return;
   const schedule = getCurrentDraftSchedule();
   const nextWeek = schedule.find(game => !game.simulated)?.week;
   if (!nextWeek) return;
 
-  schedule
-    .filter(game => game.week === nextWeek)
-    .forEach(simulateGame);
-
+  const weekGames = schedule.filter(game => game.week === nextWeek && !game.simulated);
+  const managed = weekGames.filter(isManagedGame);
+  weekGames.filter(game => !managed.includes(game)).forEach(simulateGame);
+  if (!managed.length) {
+    finishSeasonWeek();
+    return;
+  }
   syncRegularSeasonResults();
   renderSeasonScreen();
-  saveSeason(buildSeasonState(SEASON_PHASES.REGULAR_SEASON, 'complete'));
+  startMatchQueue(managed, finishSeasonWeek);
 }
 
 function simulateAllSeason() {
@@ -5200,6 +5778,7 @@ function showPlayoffScreen() {
 
   const gen = GENS[currentGenIdx];
   setPhaseTracker('playoffs');
+  syncManagerControls();
   ensurePlayoffBracket();
   syncSeason(SEASON_PHASES.PLAYOFFS, 'complete');
   renderPlayoffScreen();
@@ -5278,19 +5857,29 @@ function renderPlayoffScreen() {
 }
 
 function simulateNextPlayoffRound() {
+  if (match) return;
   const nextRound = getNextPlayablePlayoffRound();
   if (nextRound === null) return;
   const wasComplete = isPlayoffsComplete();
 
-  getCurrentPlayoffGames()
-    .filter(game => game.round === nextRound && !game.simulated && isPlayoffGameReady(game))
-    .forEach(simulateGame);
+  const roundGames = getCurrentPlayoffGames()
+    .filter(game => game.round === nextRound && !game.simulated && isPlayoffGameReady(game));
+  const managed = roundGames.filter(isManagedGame);
+  roundGames.filter(game => !managed.includes(game)).forEach(simulateGame);
 
-  resolvePlayoffSources();
-  syncPlayoffResults();
-  renderPlayoffScreen();
-  saveSeason(buildSeasonState(SEASON_PHASES.PLAYOFFS, 'complete'));
-  if (!wasComplete && isPlayoffsComplete()) crownChampion();
+  const finishRound = () => {
+    resolvePlayoffSources();
+    syncPlayoffResults();
+    renderPlayoffScreen();
+    saveSeason(buildSeasonState(SEASON_PHASES.PLAYOFFS, 'complete'));
+    if (!wasComplete && isPlayoffsComplete()) crownChampion();
+  };
+  if (managed.length) {
+    renderPlayoffScreen();
+    startMatchQueue(managed, finishRound);
+  } else {
+    finishRound();
+  }
 }
 
 function simulateAllPlayoffs() {
@@ -5763,6 +6352,7 @@ function flashRosterTab() {
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (lineupDraft) { closeLineupModal(); return; }
   if (document.getElementById('simDraftOverlay')?.classList.contains('visible')) { closeSimDraftConfirm(); return; }
   if (faClaimState) { closeFaClaim(); return; }
   if (document.getElementById('faHistoryOverlay')?.classList.contains('visible')) { closeFaHistory(); return; }
@@ -5820,6 +6410,7 @@ async function init() {
   applySetupPrefs();
   updateRounds();
   renderHallOfFame();
+  syncManagerControls();
   document.getElementById('setupScreen').style.display = 'flex';
 }
 
