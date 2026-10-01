@@ -168,88 +168,121 @@
 </div>
 
 <!-- ══════════════ FREE AGENTS ══════════════ -->
-<div id="freeAgentScreen">
-  <div class="free-agent-header-row">
-    <div class="free-agent-title" id="freeAgentTitle">Free Agents</div>
-    <div class="free-agent-sub" id="freeAgentSub">Undrafted Pokémon available to sign</div>
-  </div>
-
-  <div class="fa-clock-banner" id="faClockBanner" role="status" aria-live="polite"></div>
-
-  <div class="free-agent-toolbar">
-    <input class="fa-search" id="faSearch" type="text" placeholder="Search free agents…" oninput="filterFreeAgents(this.value)">
-    <select class="fa-select" id="faTypeFilter" onchange="filterFreeAgentType(this.value)">
-      <option value="">All Types</option>
-    </select>
-    <select class="fa-select" id="faSort" onchange="sortFreeAgents(this.value)">
-      <option value="recommended">Best Fit</option>
-      <option value="bst-desc">Highest BST</option>
-      <option value="bst-asc">Lowest BST</option>
-      <option value="name">Name A-Z</option>
-      <option value="number">Number</option>
-    </select>
-    <select class="fa-select" id="faTeamSelect" aria-label="View team" title="View another team's roster" onchange="selectFreeAgentTeam(this.value)"></select>
-  </div>
-
-  <div class="free-agent-layout">
-    <div class="free-agent-grid" id="freeAgentGrid"></div>
-    <div class="free-agent-side">
-      <div class="free-agent-side-title">Viewing Team</div>
-      <div class="free-agent-team" id="freeAgentTeam"></div>
-      <div class="free-agent-roster" id="freeAgentRoster"></div>
+<!-- One-screen layout: sticky top (whose turn), scrolling grid + sidebar, sticky bottom (actions). -->
+<div id="freeAgentScreen" data-tab="agents">
+  <div class="fa-top">
+    <div class="free-agent-header-row">
+      <div class="free-agent-title" id="freeAgentTitle">Free Agents</div>
+      <div class="free-agent-sub" id="freeAgentSub">Undrafted Pokémon available to sign</div>
+    </div>
+    <div class="fa-clock-banner" id="faClockBanner" role="status" aria-live="polite"></div>
+    <div class="fa-mobile-tabs" role="tablist" aria-label="Free agency sections">
+      <button type="button" role="tab" data-tab="agents" onclick="setFaTab('agents')">Free Agents</button>
+      <button type="button" role="tab" data-tab="roster" onclick="setFaTab('roster')">Roster</button>
+      <button type="button" role="tab" data-tab="activity" onclick="setFaTab('activity')">Activity</button>
     </div>
   </div>
 
-  <details class="fa-history" open>
-    <summary class="fa-history-summary">
-      <span>Transaction History</span>
-      <strong id="faHistoryCount">0 moves</strong>
-    </summary>
-    <div class="fa-history-body">
-      <div class="fa-history-filters">
-        <select class="fa-select" id="faHistoryDraft" onchange="filterFreeAgencyHistoryDraft(this.value)">
-          <option value="current">Current Draft</option>
-          <option value="all">All Drafts</option>
+  <div class="fa-body">
+    <div class="fa-main">
+      <div class="free-agent-toolbar">
+        <input class="fa-search" id="faSearch" type="text" placeholder="Search free agents…" oninput="filterFreeAgents(this.value)">
+        <select class="fa-select" id="faTypeFilter" onchange="filterFreeAgentType(this.value)">
+          <option value="">All Types</option>
         </select>
-        <select class="fa-select" id="faHistoryTeam" onchange="filterFreeAgencyHistoryTeam(this.value)">
-          <option value="all">All Teams</option>
+        <select class="fa-select" id="faSort" onchange="sortFreeAgents(this.value)">
+          <option value="recommended">Best Fit</option>
+          <option value="bst-desc">Highest BST</option>
+          <option value="bst-asc">Lowest BST</option>
+          <option value="name">Name A-Z</option>
+          <option value="number">Number</option>
         </select>
-        <select class="fa-select" id="faHistoryMove" onchange="filterFreeAgencyHistoryMove(this.value)">
-          <option value="all">All Claims</option>
-          <option value="drops">Claims With Drops</option>
-        </select>
+        <select class="fa-select" id="faTeamSelect" aria-label="View team" title="View another team's roster" onchange="selectFreeAgentTeam(this.value)"></select>
       </div>
-      <div class="fa-history-list" id="faHistoryList"></div>
+      <div class="fa-upgrades" id="faUpgrades"></div>
+      <div class="free-agent-grid" id="freeAgentGrid"></div>
     </div>
-  </details>
 
-  <details class="fa-history fa-waiver-activity">
-    <summary class="fa-history-summary">
-      <span>Waiver Activity</span>
-      <strong id="faWaiverCount">0 passes</strong>
-    </summary>
-    <div class="fa-history-body">
-      <div class="fa-history-filters fa-waiver-filters">
-        <select class="fa-select" id="faWaiverDraft" onchange="filterWaiverActivityDraft(this.value)">
-          <option value="current">Current Draft</option>
-          <option value="all">All Drafts</option>
-        </select>
-        <select class="fa-select" id="faWaiverTeam" onchange="filterWaiverActivityTeam(this.value)">
-          <option value="all">All Teams</option>
-        </select>
-        <select class="fa-select" id="faWaiverSource" onchange="filterWaiverActivitySource(this.value)">
-          <option value="all">Human + CPU</option>
-          <option value="human">Human Only</option>
-          <option value="cpu">CPU Only</option>
-        </select>
-      </div>
-      <div class="fa-history-list" id="faWaiverList"></div>
-    </div>
-  </details>
+    <aside class="fa-sidebar">
+      <section class="fa-side-section fa-side-roster">
+        <div class="free-agent-side-title">Roster</div>
+        <div class="free-agent-team" id="freeAgentTeam"></div>
+        <div class="free-agent-roster" id="freeAgentRoster"></div>
+      </section>
+      <section class="fa-side-section fa-side-feed">
+        <div class="free-agent-side-title fa-feed-title">
+          <span>Live Activity</span>
+          <button type="button" class="fa-history-open" onclick="openFaHistory()">Full history</button>
+        </div>
+        <div class="fa-feed" id="faFeed"></div>
+      </section>
+    </aside>
+  </div>
 
-  <div class="free-agent-actions">
-    <button class="btn-fa-secondary" onclick="showRosterScreen()">Back to Rosters</button>
+  <div class="fa-bottom">
+    <button class="btn-fa-secondary" onclick="showRosterScreen()">← Back to Rosters</button>
+    <div class="fa-bottom-status" id="faBottomStatus"></div>
     <button class="btn-fa-primary" id="btnFaContinue" onclick="continueAfterFreeAgents()">Continue to Season</button>
+  </div>
+</div>
+
+<!-- Claim pop-up: pick the Pokémon, and the drop if the roster is full -->
+<div class="dc-overlay" id="faClaimOverlay" onclick="if (event.target === this) closeFaClaim()">
+  <div class="dc-modal fa-claim-modal" id="faClaimModal" role="dialog" aria-modal="true" aria-labelledby="faClaimTitle"></div>
+</div>
+
+<!-- Full transaction + waiver history -->
+<div class="dc-overlay" id="faHistoryOverlay" onclick="if (event.target === this) closeFaHistory()">
+  <div class="dc-modal fa-history-modal" role="dialog" aria-modal="true" aria-label="Free agency history">
+    <div class="fa-history-modal-head">
+      <strong>Free Agency History</strong>
+      <button type="button" class="dc-cancel" onclick="closeFaHistory()">Close</button>
+    </div>
+    <details class="fa-history" open>
+      <summary class="fa-history-summary">
+        <span>Transaction History</span>
+        <strong id="faHistoryCount">0 moves</strong>
+      </summary>
+      <div class="fa-history-body">
+        <div class="fa-history-filters">
+          <select class="fa-select" id="faHistoryDraft" onchange="filterFreeAgencyHistoryDraft(this.value)">
+            <option value="current">Current Draft</option>
+            <option value="all">All Drafts</option>
+          </select>
+          <select class="fa-select" id="faHistoryTeam" onchange="filterFreeAgencyHistoryTeam(this.value)">
+            <option value="all">All Teams</option>
+          </select>
+          <select class="fa-select" id="faHistoryMove" onchange="filterFreeAgencyHistoryMove(this.value)">
+            <option value="all">All Claims</option>
+            <option value="drops">Claims With Drops</option>
+          </select>
+        </div>
+        <div class="fa-history-list" id="faHistoryList"></div>
+      </div>
+    </details>
+    <details class="fa-history fa-waiver-activity">
+      <summary class="fa-history-summary">
+        <span>Waiver Passes</span>
+        <strong id="faWaiverCount">0 passes</strong>
+      </summary>
+      <div class="fa-history-body">
+        <div class="fa-history-filters fa-waiver-filters">
+          <select class="fa-select" id="faWaiverDraft" onchange="filterWaiverActivityDraft(this.value)">
+            <option value="current">Current Draft</option>
+            <option value="all">All Drafts</option>
+          </select>
+          <select class="fa-select" id="faWaiverTeam" onchange="filterWaiverActivityTeam(this.value)">
+            <option value="all">All Teams</option>
+          </select>
+          <select class="fa-select" id="faWaiverSource" onchange="filterWaiverActivitySource(this.value)">
+            <option value="all">Human + CPU</option>
+            <option value="human">Human Only</option>
+            <option value="cpu">CPU Only</option>
+          </select>
+        </div>
+        <div class="fa-history-list" id="faWaiverList"></div>
+      </div>
+    </details>
   </div>
 </div>
 

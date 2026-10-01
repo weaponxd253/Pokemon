@@ -165,6 +165,9 @@ const ANNOUNCE_TOP_RANK = 10;   // board ranks that get the full "with pick #N�
 let pickAnnounceTimer = null;
 let boardRankCache = { source: null, ranks: new Map() };
 let faContinueArmed = false;  // second click on "Continue" skips open waiver turns
+let faAutoPass = new Set();   // human teams that chose "Done for this window"
+let faClaimState = null;      // { pokeId, dropId } while the claim pop-up is open
+let faToastTimer = null;
 let season = null;
 let selectedBattleLogs = { season: null, playoff: null };
 let battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
@@ -2566,7 +2569,19 @@ function triggerCpuFreeAgencyIfNeeded() {
 
   const teamIdx = currentWaiverTeamIdx();
   const team = teams[teamIdx];
-  if (!team?.isCpu) return;
+  if (!team) return;
+  if (!team.isCpu) {
+    // Humans who chose "Done for this window" pass automatically.
+    if (!faAutoPass.has(teamIdx)) return;
+    faCpuThinking = true;
+    renderFreeAgentScreen();
+    setTimeout(() => {
+      faCpuThinking = false;
+      const visible = document.getElementById('freeAgentScreen')?.style.display !== 'none';
+      if (visible && currentWaiverTeamIdx() === teamIdx) passWaiverClaim({ reason: 'done for this window' });
+    }, cpuDelay('freeAgency'));
+    return;
+  }
 
   faTeamIdx = teamIdx;
   faDropId = null;
@@ -2939,6 +2954,16 @@ function confirmDraftPick() {
   if (poke) draftPokemon(poke);
 }
 
+function statBarsHtml(poke) {
+  return [
+    ['HP', 'hp'], ['Atk', 'attack'], ['Def', 'defense'],
+    ['SpA', 'special-attack'], ['SpD', 'special-defense'], ['Spe', 'speed'],
+  ].map(([label, key]) => {
+    const value = poke.stats?.[key] ?? 0;
+    return `<div class="dc-stat"><span>${label}</span><i><b style="width:${Math.min(100, value / 1.6)}%"></b></i><strong>${value}</strong></div>`;
+  }).join('');
+}
+
 function renderDraftConfirm() {
   const overlay = document.getElementById('draftConfirmOverlay');
   const modal = document.getElementById('draftConfirm');
@@ -2954,13 +2979,7 @@ function renderDraftConfirm() {
   }
 
   const rec = draftRecommendationScore(poke, team);
-  const stats = [
-    ['HP', 'hp'], ['Atk', 'attack'], ['Def', 'defense'],
-    ['SpA', 'special-attack'], ['SpD', 'special-defense'], ['Spe', 'speed'],
-  ].map(([label, key]) => {
-    const value = poke.stats?.[key] ?? 0;
-    return `<div class="dc-stat"><span>${label}</span><i><b style="width:${Math.min(100, value / 1.6)}%"></b></i><strong>${value}</strong></div>`;
-  }).join('');
+  const stats = statBarsHtml(poke);
 
   modal.innerHTML = `
     <div class="dc-kicker"><span class="dc-team-dot" style="background:${team.color}"></span>${possessive(team.name)} pick · Round ${currentRound + 1}</div>
@@ -3503,6 +3522,10 @@ function showFreeAgentScreen() {
   getWaiverOrder();
   setPhaseTracker('freeAgency');
   faContinueArmed = false;
+  faAutoPass = new Set();
+  closeFaClaim();
+  closeFaHistory();
+  setFaTab('agents');
   faTeamIdx = currentWaiverTeamIdx();
   const savedFreeAgency = normalizeFreeAgencyState(season?.freeAgencyState, draftNumber, teams.length);
   const resumingCurrentWindow = savedFreeAgency.draftId === draftNumber && savedFreeAgency.status === 'open';
@@ -3731,15 +3754,11 @@ function renderFreeAgentScreen() {
   const count = rosterCount(team);
   const benchCount = Math.max(0, count - ACTIVE_ROSTER_SIZE);
   const atLimit = count >= limit;
-  const selectedDrop = selectedFreeAgentDrop(team);
   const currentClaimIdx = currentWaiverTeamIdx();
-  const currentClaimTeam = teams[currentClaimIdx];
   const onClock = faTeamIdx === currentClaimIdx;
   const rank = waiverRank(faTeamIdx);
 
-  if (sub) {
-    sub.textContent = `${list.length} available · waiver claims rotate after claim or pass`;
-  }
+  if (sub) sub.textContent = `${list.length} available · claims rotate the waiver order`;
 
   if (teamPanel && team) {
     teamPanel.innerHTML = `
@@ -3748,22 +3767,10 @@ function renderFreeAgentScreen() {
         <span>${team.name}</span>
         ${cpuBadgeHtml(team, 'free-agent-cpu-personality', { compact: true })}
       </div>
-      <div class="fa-team-meta">${count}/${limit} owned · ${(team.activeIds ?? []).length}/${ACTIVE_ROSTER_SIZE} active · ${benchCount} bench · waiver #${rank ?? '-'}</div>
-      <div class="fa-waiver-panel">
-        <div class="fa-waiver-head">
-          <span>Waiver order</span>
-        </div>
-        <div class="fa-waiver-pills">${waiverOrderPills()}</div>
-      </div>
+      <div class="fa-team-meta">${count}/${limit} owned · ${(team.activeIds ?? []).length} active · ${benchCount} bench · waiver #${rank ?? '-'}</div>
       <div class="fa-roster-limit ${atLimit ? 'at-limit' : ''}">
-        ${!onClock
-          ? `${team.name} is waiting for waiver priority`
-          : atLimit
-          ? (selectedDrop ? `At limit · signing will drop ${selectedDrop.name}` : 'At limit · choose a bench drop before signing')
-          : `${limit - count} roster slot${limit - count === 1 ? '' : 's'} open`}
+        ${atLimit ? 'Roster full · a claim will drop a bench Pokémon' : `${limit - count} open roster slot${limit - count === 1 ? '' : 's'}`}
       </div>
-      <div class="fa-rule-note">${faCpuThinking ? 'CPU free agency is resolving.' : 'Only the team first in waiver order can claim. Active roster Pokémon are protected.'}</div>
-      ${faNotice ? `<div class="fa-notice">${faNotice}</div>` : ''}
     `;
   }
 
@@ -3773,38 +3780,36 @@ function renderFreeAgentScreen() {
       .sort((a, b) => Number(active.has(b.id)) - Number(active.has(a.id)) || pokemonPower(b) - pokemonPower(a))
       .map(p => {
         const isActive = active.has(p.id);
-        const canDrop = canDropPokemon(team, p.id);
-        const selected = faDropId === p.id;
         return `
-        <div class="fa-roster-chip${isActive ? ' active' : ''}${selected ? ' drop-selected' : ''}">
+        <div class="fa-roster-chip${isActive ? ' active' : ''}">
           <img src="${p.sprite}" alt="${p.name}">
           <span>${p.name}</span>
           <strong>${p.bst}</strong>
           <small>${isActive ? 'Active' : 'Bench'}</small>
-          ${canDrop
-            ? `<button class="fa-drop-btn" onclick="selectFreeAgentDrop(${p.id})">${selected ? 'Marked' : 'Mark'}</button>`
-            : `<em>${isActive ? 'Locked' : 'Keep'}</em>`}
+          <em>${isActive ? 'Protected' : canDropPokemon(team, p.id) ? 'Droppable' : 'Keep'}</em>
         </div>
       `;
       }).join('') || '<div class="fa-empty">No owned Pokémon</div>';
   }
 
   renderFreeAgentClockBanner();
+  renderFaUpgrades(team);
+  renderFaFeed();
+  renderFaBottom();
   renderFreeAgencyHistory();
   renderWaiverActivity();
 
   if (!grid) return;
   grid.innerHTML = list.length ? list.map(poke => {
     const rec = team ? draftRecommendationScore(poke, team) : null;
-    const canClaim = canClaimFreeAgent(team, poke, faTeamIdx) && !faCpuThinking;
-    const claimable = canClaim ? ' claimable' : '';
+    const canClaim = canOpenClaim(team, poke, faTeamIdx);
     const actionText = !onClock
       ? 'Waiting'
       : faCpuThinking ? 'CPU Thinking'
-      : selectedDrop ? `Claim / Drop ${selectedDrop.name}`
-      : (atLimit ? 'Choose Drop' : 'Claim');
+      : !canClaim ? 'Unavailable'
+      : (atLimit ? 'Claim + drop' : 'Claim');
     return `
-      <button class="free-agent-card${canClaim ? '' : ' disabled'}${claimable}" onclick="claimFreeAgent(${poke.id})"${canClaim ? '' : ' disabled'}>
+      <button class="free-agent-card${canClaim ? ' claimable' : ' disabled'}" onclick="openFaClaim(${poke.id})"${canClaim ? '' : ' disabled'}>
         ${rec ? `<span class="fa-fit" title="${recommendationTitle(rec)}">Fit ${rec.score}</span>` : ''}
         <img src="${poke.sprite}" alt="${poke.name}" onerror="this.style.visibility='hidden'">
         <span class="fa-num">#${String(poke.id).padStart(3, '0')}</span>
@@ -3821,17 +3826,73 @@ function isWaiverCycleComplete() {
   return faCpuPassStreak >= teams.length;
 }
 
+// A human team on the clock can open the claim pop-up if it has room, or a
+// bench Pokémon it could drop.
+function canOpenClaim(team, poke, teamIdx = faTeamIdx) {
+  if (!team || team.isCpu || faCpuThinking || teamIdx !== currentWaiverTeamIdx()) return false;
+  if (!canAddPokemonToTeam(team, poke)) return false;
+  return rosterCount(team) < rosterLimit() || team.picks.some(p => canDropPokemon(team, p.id));
+}
+
+// Weakest droppable bench Pokémon, scored without itself so it isn't
+// penalised for "duplicating" its own types.
+function weakestBenchPokemon(team) {
+  return team.picks
+    .filter(p => canDropPokemon(team, p.id))
+    .map(p => ({ poke: p, score: draftRecommendationScore(p, { ...team, picks: team.picks.filter(x => x.id !== p.id) }).score }))
+    .sort((a, b) => a.score - b.score || pokemonPower(a.poke) - pokemonPower(b.poke))[0] ?? null;
+}
+
+function bestFreeAgentUpgrades(team, count = 3) {
+  if (!team || team.isCpu) return [];
+  const pool = freeAgentPokemon(allPokemon);
+  if (rosterCount(team) < rosterLimit()) {
+    return pool
+      .map(poke => ({ poke, score: draftRecommendationScore(poke, team).score }))
+      .sort((a, b) => b.score - a.score || b.poke.bst - a.poke.bst)
+      .slice(0, count)
+      .map(entry => ({ ...entry, label: `Fit ${entry.score} · open slot`, dropId: null }));
+  }
+  const weakest = weakestBenchPokemon(team);
+  if (!weakest) return [];
+  const rest = { ...team, picks: team.picks.filter(p => p.id !== weakest.poke.id) };
+  return pool
+    .map(poke => ({ poke, gain: draftRecommendationScore(poke, rest).score - weakest.score }))
+    .filter(entry => entry.gain > 0)
+    .sort((a, b) => b.gain - a.gain || b.poke.bst - a.poke.bst)
+    .slice(0, count)
+    .map(entry => ({ ...entry, label: `+${entry.gain} over ${pokemonDisplayName(weakest.poke)}`, dropId: weakest.poke.id }));
+}
+
+function renderFaUpgrades(team) {
+  const el = document.getElementById('faUpgrades');
+  if (!el) return;
+  const upgrades = bestFreeAgentUpgrades(team);
+  if (!upgrades.length) {
+    const full = team && !team.isCpu && rosterCount(team) >= rosterLimit();
+    el.innerHTML = full
+      ? `<div class="fa-upgrades-note">No free agent beats ${possessive(team.name)} weakest bench Pokémon right now — passing is a safe choice.</div>`
+      : '';
+    return;
+  }
+  const canAct = team && faTeamIdx === currentWaiverTeamIdx() && !faCpuThinking;
+  el.innerHTML = `
+    <div class="fa-upgrades-title">Best upgrades for ${team.name}</div>
+    <div class="fa-upgrades-row">
+      ${upgrades.map(entry => `
+        <button type="button" class="fa-upgrade" onclick="openFaClaim(${entry.poke.id}, ${entry.dropId ?? 'null'})"${canAct ? '' : ' disabled'}>
+          <img src="${entry.poke.sprite}" alt="" onerror="this.style.visibility='hidden'">
+          <span class="fa-upgrade-name">${pokemonDisplayName(entry.poke)}</span>
+          <span class="fa-upgrade-gain">${entry.label}</span>
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+
 function renderFreeAgentClockBanner() {
   const banner = document.getElementById('faClockBanner');
-  const continueBtn = document.getElementById('btnFaContinue');
-  if (continueBtn) {
-    continueBtn.textContent = faContinueArmed && !isWaiverCycleComplete()
-      ? 'Skip Remaining Claims →'
-      : 'Continue to Season';
-    continueBtn.classList.toggle('armed', faContinueArmed && !isWaiverCycleComplete());
-  }
   if (!banner) return;
-
   const clockIdx = currentWaiverTeamIdx();
   const clockTeam = teams[clockIdx];
   if (!clockTeam) {
@@ -3839,7 +3900,14 @@ function renderFreeAgentClockBanner() {
     return;
   }
   const dot = `<span class="fcb-dot" style="background:${clockTeam.color}"></span>`;
-  const passed = `${faCpuPassStreak} of ${teams.length} teams passed in a row`;
+  const order = getWaiverOrder();
+  const pills = order.map((teamIdx, idx) => {
+    const team = teams[teamIdx];
+    const passed = idx >= order.length - faCpuPassStreak;
+    const current = idx === 0 && !isWaiverCycleComplete();
+    return `<span class="fcb-pill${passed ? ' passed' : ''}${current ? ' current' : ''}" title="${team.name}${passed ? ' passed' : current ? ' is on the clock' : ''}">
+      <i style="background:${team.color}"></i>${passed ? '✓ ' : ''}${team.name}</span>`;
+  }).join('');
   let title;
   let sub;
   let actions = '';
@@ -3847,28 +3915,24 @@ function renderFreeAgentClockBanner() {
 
   if (isWaiverCycleComplete()) {
     tone = ' done';
-    title = 'Waiver cycle complete';
-    sub = 'Every team passed. Continue to the season when ready.';
-  } else if (faCpuThinking || clockTeam.isCpu) {
+    title = '✓ Free agency is closed';
+    sub = 'Every team passed in a row. Continue to the season when ready.';
+  } else if (faCpuThinking || clockTeam.isCpu || faAutoPass.has(clockIdx)) {
     tone = ' cpu';
     title = `${dot}${clockTeam.name} is deciding…`;
-    sub = `CPU claims resolve automatically · ${passed}`;
+    sub = faAutoPass.has(clockIdx) ? 'Done for this window — passing automatically.' : 'CPU claims resolve automatically.';
   } else {
-    const atLimit = rosterCount(clockTeam) >= rosterLimit();
-    const drop = selectedFreeAgentDrop(clockTeam);
     tone = ' human';
     title = `${dot}${clockTeam.name} — your claim`;
-    sub = atLimit && !drop
-      ? 'Roster is full: mark a bench Pokémon to drop, then pick a free agent — or pass.'
-      : drop
-        ? `Claiming will drop ${drop.name}. Pick a free agent, or pass.`
-        : 'Pick a free agent to claim, or pass your turn.';
-    actions = `<button class="fcb-pass" onclick="passWaiverClaim()">Pass Claim</button>`;
+    sub = rosterCount(clockTeam) >= rosterLimit()
+      ? 'Roster is full: pick a free agent and choose who to drop, or pass.'
+      : 'Pick a free agent to claim, or pass your turn.';
+    actions = `
+      <button class="fcb-done" onclick="doneForWindow()" title="Pass now and every time your turn comes back this window">Done for this window</button>
+      <button class="fcb-pass" onclick="passWaiverClaim()">Pass Claim</button>`;
   }
 
   if (faTeamIdx !== clockIdx && !isWaiverCycleComplete()) {
-    const viewing = teams[faTeamIdx];
-    sub = `Viewing ${viewing ? possessive(viewing.name) : "another team's"} roster. ${sub}`;
     actions = `<button class="fcb-back" onclick="selectFreeAgentTeam(${clockIdx})">Back to ${clockTeam.name}</button>${actions}`;
   }
 
@@ -3877,9 +3941,186 @@ function renderFreeAgentClockBanner() {
     <div class="fcb-text">
       <div class="fcb-title">${title}</div>
       <div class="fcb-sub">${sub}</div>
+      ${faNotice ? `<div class="fcb-notice">${faNotice}</div>` : ''}
     </div>
     <div class="fcb-actions">${actions}</div>
+    <div class="fcb-cycle">
+      <span class="fcb-cycle-label">Waiver order · closes when all pass in a row</span>
+      <div class="fcb-pills">${pills}</div>
+    </div>
   `;
+}
+
+function renderFaBottom() {
+  const status = document.getElementById('faBottomStatus');
+  const continueBtn = document.getElementById('btnFaContinue');
+  const open = !isWaiverCycleComplete();
+  if (continueBtn) {
+    continueBtn.textContent = faContinueArmed && open ? 'Skip Remaining Claims →' : 'Continue to Season →';
+    continueBtn.classList.toggle('armed', faContinueArmed && open);
+    continueBtn.classList.toggle('ready', !open);
+  }
+  if (!status) return;
+  const auto = [...faAutoPass].map(idx => teams[idx]).filter(Boolean);
+  status.innerHTML = `
+    <span>${open ? `${faCpuPassStreak} of ${teams.length} teams passed in a row` : 'Waiver cycle complete'}</span>
+    ${auto.map(team => `<span class="fa-auto-chip">${team.name} done <button type="button" onclick="resumeClaiming(${teams.indexOf(team)})">Resume</button></span>`).join('')}
+  `;
+}
+
+// One merged, newest-first feed of this window's claims and passes.
+function renderFaFeed() {
+  const el = document.getElementById('faFeed');
+  if (!el) return;
+  const claims = normalizeFreeAgencyTransactions(season?.freeAgencyTransactions)
+    .filter(t => t.draftId === draftNumber)
+    .map(t => ({ time: t.timestamp, id: t.id, kind: 'claim', item: t }));
+  const passes = normalizeWaiverEvents(season?.waiverEvents)
+    .filter(e => e.draftId === draftNumber)
+    .map(e => ({ time: e.timestamp, id: e.id, kind: 'pass', item: e }));
+  const feed = [...claims, ...passes]
+    .sort((a, b) => b.time.localeCompare(a.time) || b.id.localeCompare(a.id))
+    .slice(0, 40);
+  el.innerHTML = feed.length ? feed.map(({ kind, item }) => {
+    const who = `<b style="color:${item.teamColor}">${item.teamName}</b>`;
+    const src = `<span class="fa-feed-src ${item.source}">${item.source === 'cpu' ? 'CPU' : 'You'}</span>`;
+    if (kind === 'claim') {
+      return `<div class="fa-feed-row claim">${src}<div>${who} claimed <strong class="dc-poke-name">${item.pokemonName}</strong>${item.droppedPokemonName ? `<span class="fa-feed-drop">dropped <span class="dc-poke-name">${item.droppedPokemonName}</span></span>` : ''}</div></div>`;
+    }
+    return `<div class="fa-feed-row pass${item.cycleComplete ? ' cycle' : ''}">${src}<div>${who} passed${item.reason ? ` <span class="fa-feed-reason">· ${item.reason}</span>` : ''}${item.cycleComplete ? '<span class="fa-feed-drop">Cycle complete</span>' : ''}</div></div>`;
+  }).join('') : '<div class="fa-feed-empty">No moves yet. Claims and passes show up here as they happen.</div>';
+}
+
+function showFaToast(team, html) {
+  const toast = document.getElementById('draftToast');
+  if (!toast || !team) return;
+  toast.innerHTML = `
+    <span class="dt-dot" style="background:${team.color}"></span>
+    <span class="dt-text">${html}</span>
+    <span class="dt-timer" style="animation-duration:2600ms"></span>
+  `;
+  toast.classList.add('cpu', 'above-bar');
+  toast.classList.remove('visible');
+  void toast.offsetWidth;
+  toast.classList.add('visible');
+  clearTimeout(faToastTimer);
+  faToastTimer = setTimeout(() => toast.classList.remove('visible', 'above-bar'), 2600);
+}
+
+// ── Claim pop-up ──
+function openFaClaim(pokeId, dropId = null) {
+  const clockIdx = currentWaiverTeamIdx();
+  const team = teams[clockIdx];
+  const poke = allPokemon.find(p => p.id === pokeId);
+  if (!canOpenClaim(team, poke, clockIdx)) return;
+  faTeamIdx = clockIdx;
+  const atLimit = rosterCount(team) >= rosterLimit();
+  const suggested = atLimit ? weakestBenchPokemon(team)?.poke.id ?? null : null;
+  faClaimState = { pokeId, dropId: atLimit ? (canDropPokemon(team, dropId) ? dropId : suggested) : null, suggested };
+  renderFaClaim();
+  document.getElementById('faClaimOverlay').classList.add('visible');
+  document.getElementById('faClaimConfirm')?.focus();
+}
+
+function selectFaClaimDrop(dropId) {
+  if (!faClaimState) return;
+  faClaimState.dropId = dropId;
+  renderFaClaim();
+}
+
+function renderFaClaim() {
+  const modal = document.getElementById('faClaimModal');
+  const team = teams[currentWaiverTeamIdx()];
+  const poke = allPokemon.find(p => p.id === faClaimState?.pokeId);
+  if (!modal || !team || !poke) return;
+  const atLimit = rosterCount(team) >= rosterLimit();
+  const rec = draftRecommendationScore(poke, team);
+  const bench = team.picks.filter(p => canDropPokemon(team, p.id))
+    .sort((a, b) => pokemonPower(a) - pokemonPower(b));
+  const drop = bench.find(p => p.id === faClaimState.dropId) ?? null;
+  const free = rosterLimit() - rosterCount(team);
+
+  modal.innerHTML = `
+    <div class="dc-kicker"><span class="dc-team-dot" style="background:${team.color}"></span>${possessive(team.name)} claim · waiver #${waiverRank(currentWaiverTeamIdx()) ?? 1}</div>
+    <div class="dc-head">
+      <img src="${poke.sprite}" alt="" onerror="this.style.visibility='hidden'">
+      <div class="dc-info">
+        <div class="dc-name" id="faClaimTitle">${poke.name}</div>
+        <div class="dc-meta">#${String(poke.id).padStart(3, '0')} · BST ${poke.bst} · Fit ${rec.score}</div>
+        <div class="dc-types">${typePills(poke.types)} <em>${rec.reason}</em></div>
+      </div>
+    </div>
+    <div class="dc-stats">${statBarsHtml(poke)}</div>
+    ${atLimit ? `
+      <div class="fcl-drop-title">Roster full — choose who to drop</div>
+      <div class="fcl-drops">
+        ${bench.map(p => {
+          const diff = poke.bst - p.bst;
+          return `
+          <button type="button" class="fcl-drop${p.id === faClaimState.dropId ? ' selected' : ''}" onclick="selectFaClaimDrop(${p.id})" aria-pressed="${p.id === faClaimState.dropId}">
+            <img src="${p.sprite}" alt="" onerror="this.style.visibility='hidden'">
+            <span class="fcl-drop-name dc-poke-name">${p.name}</span>
+            <span class="fcl-drop-bst">BST ${p.bst}</span>
+            <span class="fcl-drop-diff ${diff >= 0 ? 'up' : 'down'}">${diff >= 0 ? '+' : ''}${diff}</span>
+            ${p.id === faClaimState.suggested ? '<span class="fcl-suggested">Suggested</span>' : ''}
+          </button>`;
+        }).join('')}
+      </div>
+    ` : `<div class="fcl-slot-note">Uses 1 of ${free} open roster slot${free === 1 ? '' : 's'}. New claims join the bench.</div>`}
+    <div class="dc-actions">
+      <button class="dc-cancel" onclick="closeFaClaim()">Cancel</button>
+      <button class="dc-confirm" id="faClaimConfirm" style="--team:${team.color}" onclick="confirmFaClaim()"${atLimit && !drop ? ' disabled' : ''}>
+        Claim <span class="dc-poke-name">${poke.name}</span>${drop ? ` · drop <span class="dc-poke-name">${drop.name}</span>` : ''}
+      </button>
+    </div>
+  `;
+}
+
+function closeFaClaim() {
+  faClaimState = null;
+  document.getElementById('faClaimOverlay')?.classList.remove('visible');
+}
+
+function confirmFaClaim() {
+  if (!faClaimState) return;
+  const { pokeId, dropId } = faClaimState;
+  closeFaClaim();
+  faTeamIdx = currentWaiverTeamIdx();
+  faDropId = dropId;
+  claimFreeAgent(pokeId);
+}
+
+// ── Done for this window ──
+function doneForWindow() {
+  const idx = currentWaiverTeamIdx();
+  if (teams[idx]?.isCpu || faCpuThinking) return;
+  faAutoPass.add(idx);
+  passWaiverClaim({ reason: 'done for this window' });
+}
+
+function resumeClaiming(teamIdx) {
+  faAutoPass.delete(teamIdx);
+  renderFreeAgentScreen();
+  triggerCpuFreeAgencyIfNeeded();
+}
+
+function openFaHistory() {
+  renderFreeAgencyHistory();
+  renderWaiverActivity();
+  document.getElementById('faHistoryOverlay')?.classList.add('visible');
+}
+
+function closeFaHistory() {
+  document.getElementById('faHistoryOverlay')?.classList.remove('visible');
+}
+
+function setFaTab(tab) {
+  const screen = document.getElementById('freeAgentScreen');
+  if (!screen) return;
+  screen.dataset.tab = tab;
+  screen.querySelectorAll('.fa-mobile-tabs button').forEach(btn => {
+    btn.setAttribute('aria-selected', String(btn.dataset.tab === tab));
+  });
 }
 
 function claimFreeAgent(pokeId, options = {}) {
@@ -3896,21 +4137,13 @@ function claimFreeAgent(pokeId, options = {}) {
   }
   const waiverRankBefore = waiverRank(teamIdx);
   const selectedDrop = selectedFreeAgentDrop(team);
-  let claimNotice;
   if (selectedDrop) {
     removePokemonFromTeam(team, selectedDrop.id);
-    claimNotice = options.source === 'cpu'
-      ? `${team.name} claimed ${poke.name} and dropped ${selectedDrop.name}.`
-      : `${selectedDrop.name} was dropped. ${poke.name} claimed by ${team.name}.`;
     faDropId = null;
   } else if (rosterCount(team) >= rosterLimit()) {
     faNotice = 'Choose a bench Pokémon to drop before signing at the roster limit.';
     renderFreeAgentScreen();
     return;
-  } else {
-    claimNotice = options.source === 'cpu'
-      ? `${team.name} claimed ${poke.name}.`
-      : `${poke.name} claimed by ${team.name}.`;
   }
   team.picks.push(poke);
   faContinueArmed = false;
@@ -3928,11 +4161,11 @@ function claimFreeAgent(pokeId, options = {}) {
   setFreeAgencyState('open', faCpuPassStreak);
   rotateWaiverOrder(teamIdx);
   faTeamIdx = currentWaiverTeamIdx();
-  const nextTeam = teams[faTeamIdx];
   const gainText = options.source === 'cpu' && Number.isFinite(options.gain)
-    ? ` Upgrade +${options.gain}.`
+    ? ` · upgrade +${options.gain}`
     : '';
-  faNotice = `${claimNotice}${gainText} ${nextTeam ? `${nextTeam.name} is next on claim.` : ''}`;
+  faNotice = '';
+  showFaToast(team, `<strong>${team.name}</strong> claimed <strong class="dc-poke-name">${poke.name}</strong>${selectedDrop ? `, dropped <span class="dc-poke-name">${selectedDrop.name}</span>` : ''}${gainText}`);
   populateFreeAgentControls();
   renderFreeAgentScreen();
   saveSeason(buildSeasonState(SEASON_PHASES.ROSTER_LOCK, 'complete'));
@@ -3951,7 +4184,6 @@ function passWaiverClaim(options = {}) {
   faTeamIdx = currentWaiverTeamIdx();
   faDropId = null;
   faCpuPassStreak = passNumberInCycle;
-  const nextTeam = teams[faTeamIdx];
   const cycleComplete = faCpuPassStreak >= teams.length;
   setFreeAgencyState('open', faCpuPassStreak);
   recordWaiverPass({
@@ -3963,9 +4195,10 @@ function passWaiverClaim(options = {}) {
     passNumberInCycle,
     cycleComplete,
   });
-  const reason = options.source === 'cpu' && options.reason ? ` (${options.reason})` : '';
-  const cycleDone = cycleComplete ? ' All teams have passed this waiver cycle.' : '';
-  faNotice = `${passingTeam.name} passed${reason}. ${nextTeam ? `${nextTeam.name} is next on claim.` : ''}${cycleDone}`;
+  const reason = options.reason ? ` (${options.reason})` : '';
+  const cycleDone = cycleComplete ? ' Free agency is closed.' : '';
+  faNotice = '';
+  showFaToast(passingTeam, `<strong>${passingTeam.name}</strong> passed${reason}.${cycleDone}`);
   populateFreeAgentControls();
   renderFreeAgentScreen();
   saveSeason(buildSeasonState(SEASON_PHASES.ROSTER_LOCK, 'complete'));
@@ -3974,20 +4207,6 @@ function passWaiverClaim(options = {}) {
 
 function signFreeAgent(pokeId) {
   claimFreeAgent(pokeId);
-}
-
-function selectFreeAgentDrop(pokeId) {
-  if (faCpuThinking) return;
-  const team = teams[faTeamIdx];
-  if (!canDropPokemon(team, pokeId)) {
-    faNotice = 'Only bench Pokémon can be dropped from the free-agent screen.';
-    renderFreeAgentScreen();
-    return;
-  }
-  faDropId = faDropId === pokeId ? null : pokeId;
-  const selected = selectedFreeAgentDrop(team);
-  faNotice = selected ? `${selected.name} marked as the next drop.` : '';
-  renderFreeAgentScreen();
 }
 
 function filterFreeAgencyHistoryDraft(value) {
@@ -4055,6 +4274,9 @@ function continueAfterFreeAgents() {
     return;
   }
   faContinueArmed = false;
+  faAutoPass = new Set();
+  closeFaClaim();
+  closeFaHistory();
   faDropId = null;
   faNotice = '';
   faCpuThinking = false;
@@ -5060,6 +5282,8 @@ function flashRosterTab() {
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (faClaimState) { closeFaClaim(); return; }
+  if (document.getElementById('faHistoryOverlay')?.classList.contains('visible')) { closeFaHistory(); return; }
   if (document.getElementById('champOverlay')?.classList.contains('visible')) {
     closeChampionCelebration();
     return;
