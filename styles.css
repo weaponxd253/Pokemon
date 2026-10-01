@@ -2712,6 +2712,106 @@ body.has-phase-tracker #freeAgentScreen { height: calc(100vh - var(--tracker-h))
 
 .fa-mobile-tabs { display: none; }
 
+/* ═══════════ SEASON: ONE-SCREEN LAYOUT ═══════════ */
+[hidden] { display: none !important; }
+#seasonScreen { padding: 14px 20px 0; overflow: hidden; height: 100vh; }
+body.has-phase-tracker #seasonScreen { height: calc(100vh - var(--tracker-h)); }
+@supports (height: 100dvh) {
+  #seasonScreen { height: 100dvh; }
+  body.has-phase-tracker #seasonScreen { height: calc(100dvh - var(--tracker-h)); }
+}
+#seasonScreen .season-header-row {
+  flex-shrink: 0; margin-bottom: 12px;
+  display: flex; align-items: baseline; justify-content: center; gap: 14px; flex-wrap: wrap;
+}
+#seasonScreen .season-title { margin-bottom: 0; }
+#seasonScreen .season-layout { flex: 1; min-height: 0; align-items: stretch; }
+#seasonScreen .season-main {
+  min-height: 0; overflow-y: auto; padding: 0 6px 14px 0;
+  display: flex; flex-direction: column; gap: 14px;
+}
+#seasonScreen .season-main .season-section-lbl { margin-bottom: 0; }
+#seasonScreen .season-side { min-height: 0; display: flex; flex-direction: column; padding-bottom: 14px; }
+#seasonScreen .season-schedule { flex: 0 1 auto; max-height: 55%; min-height: 120px; overflow-y: auto; padding-right: 4px; }
+#seasonScreen .battle-log-panel { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin-top: 10px; }
+
+/* You */
+.you-tag {
+  display: inline-block; margin-left: 5px; padding: 1px 5px; border-radius: 4px; vertical-align: middle;
+  background: var(--yellow); color: #000; font-family: 'Press Start 2P', monospace; font-size: 6px; text-transform: uppercase;
+}
+.season-standing-row.is-you { border-color: rgba(255,215,0,0.6); background: rgba(255,215,0,0.05); }
+.season-game.mine { box-shadow: inset 3px 0 0 var(--yellow); }
+
+/* Weeks: played weeks collapse to one line of results */
+details.season-week > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+details.season-week > summary::-webkit-details-marker { display: none; }
+details.season-week > summary::before { content: '▸'; color: var(--muted); font-family: 'Rajdhani', sans-serif; font-size: 12px; }
+details.season-week[open] > summary::before { content: '▾'; }
+details.season-week:not([open]) > summary { border-bottom: none; }
+details.season-week.next { border-color: rgba(255,215,0,0.5); }
+.sw-result {
+  font-family: 'Rajdhani', sans-serif; font-size: 12px; color: var(--muted);
+  padding: 1px 6px; border-radius: 4px; background: var(--surface2);
+}
+.sw-result b { font-weight: 700; }
+.sw-result b.w { color: var(--text); }
+.sw-upcoming { font-family: 'Rajdhani', sans-serif; font-size: 12px; color: var(--muted); }
+details.season-week.next .sw-upcoming { color: var(--yellow); font-weight: 700; }
+.season-game.upcoming { cursor: help; }
+.season-game .odds { font-family: 'Rajdhani', sans-serif; font-size: 12px; font-weight: 700; color: var(--muted); }
+
+/* Next game / week preview */
+.season-next-game {
+  padding: 14px 16px; border-radius: 10px;
+  background: var(--surface); border: 1px solid rgba(255,215,0,0.45);
+}
+.season-next-game:empty { display: none; }
+.sng-label { font-size: 11px; font-weight: 700; color: var(--yellow); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+.sng-body { font-size: 15px; color: var(--text); line-height: 1.4; }
+.sng-game + .sng-game { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.sng-teams { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 16px; font-weight: 700; }
+.sng-teams span { display: inline-flex; align-items: center; gap: 6px; }
+.sng-teams i { width: 10px; height: 10px; border-radius: 50%; }
+.sng-vs { color: var(--muted); font-size: 12px; font-weight: 400; }
+.sng-odds { display: flex; height: 22px; margin-top: 8px; border-radius: 6px; overflow: hidden; }
+.sng-odds b {
+  display: flex; align-items: center; justify-content: center; min-width: 34px;
+  font-size: 12px; font-weight: 700; color: #000; text-shadow: 0 0 4px rgba(255,255,255,0.4);
+}
+.sng-edge { margin-top: 6px; font-size: 13px; color: var(--muted); }
+
+/* League leaders */
+.season-leaders { display: flex; flex-direction: column; gap: 8px; }
+.sl-list { display: grid; gap: 6px; }
+.sl-row {
+  display: grid; grid-template-columns: 18px 36px minmax(0, 1fr) minmax(0, 1fr) 28px; align-items: center; gap: 8px;
+  padding: 4px 12px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); font-size: 14px;
+}
+.sl-rank { font-family: 'Press Start 2P', monospace; font-size: 8px; color: var(--yellow); }
+.sl-row img { width: 36px; height: 36px; image-rendering: pixelated; }
+.sl-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sl-team { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); overflow: hidden; white-space: nowrap; }
+.sl-team i { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.sl-row strong { text-align: right; font-family: 'Press Start 2P', monospace; font-size: 10px; color: var(--yellow); }
+.sl-empty { font-size: 13px; color: var(--muted); padding: 10px 12px; border: 1px dashed var(--border); border-radius: 8px; }
+
+/* Battle log: one line per skirmish */
+.battle-set { grid-template-columns: 28px minmax(0, 1fr) auto; row-gap: 3px; }
+.battle-set-matchup span.won { color: var(--text); font-weight: 700; }
+.battle-set-winner { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.battle-set-winner i { width: 8px; height: 8px; border-radius: 50%; }
+.battle-set-reason { grid-column: 2 / -1; font-size: 13px; color: var(--muted); line-height: 1.35; }
+
+/* Bottom bar */
+.season-bottom {
+  flex-shrink: 0; width: 100%; max-width: 1400px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 10px 0 14px; border-top: 1px solid var(--border);
+}
+.season-bottom-status { font-size: 14px; color: var(--muted); }
+.season-bottom-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
 /* ═══════════════════════════════════════
    MOBILE RESPONSIVE  (≤ 640px)
    ═══════════════════════════════════════ */
@@ -2766,6 +2866,21 @@ body.has-phase-tracker #freeAgentScreen { height: calc(100vh - var(--tracker-h))
   .fa-bottom .btn-fa-secondary, .fa-bottom .btn-fa-primary { width: auto; padding: 12px 10px; font-size: 8px; flex: 1; }
   .fa-bottom-status { display: none; }
   .draft-toast.above-bar { bottom: 70px; }
+
+  /* ── Season on phones: normal page scroll, sticky bottom bar ── */
+  #seasonScreen, body.has-phase-tracker #seasonScreen { height: auto; overflow: visible; padding: 14px 12px 0; }
+  #seasonScreen .season-main, #seasonScreen .season-schedule, #seasonScreen .battle-log-panel { overflow: visible; max-height: none; min-height: 0; }
+  .season-bottom {
+    position: sticky; bottom: 0; z-index: 5; background: var(--bg);
+    padding: 8px 0 10px; gap: 6px;
+  }
+  .season-bottom-status { display: none; }
+  .season-bottom-actions { width: 100%; flex-wrap: nowrap; }
+  .season-bottom-actions .btn-season-primary,
+  .season-bottom-actions .btn-season-secondary,
+  .season-bottom-actions .btn-season-continue { width: auto; flex: 1; padding: 12px 8px; font-size: 8px; }
+  .sl-row { grid-template-columns: 18px 32px minmax(0, 1fr) 28px; }
+  .sl-team { display: none; }
 
   /* ── Ease-of-use controls on phones ── */
   .pt-speed span { display: none; }

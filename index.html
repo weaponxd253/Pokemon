@@ -293,10 +293,13 @@
     <div class="season-sub" id="seasonSub">Round robin schedule</div>
   </div>
 
+  <!-- One-screen layout: both columns scroll on their own, actions stay in the bottom bar. -->
   <div class="season-layout">
     <div class="season-main">
       <div class="season-section-lbl">Standings</div>
       <div class="season-standings" id="seasonStandings"></div>
+      <div class="season-next-game" id="seasonNextGame"></div>
+      <div class="season-leaders" id="seasonLeaders"></div>
     </div>
 
     <div class="season-side">
@@ -306,11 +309,13 @@
     </div>
   </div>
 
-  <div class="season-actions">
-    <button class="btn-season-primary" id="btnSimWeek" onclick="simulateNextWeek()">Simulate Week</button>
-    <button class="btn-season-secondary" id="btnSimAll" onclick="simulateAllSeason()">Simulate All</button>
-    <button class="btn-season-secondary" id="btnSimToPlayoffs" onclick="simToPlayoffs()">Sim to Playoffs →</button>
-    <button class="btn-season-continue" id="btnSeasonContinue" onclick="continueAfterRegularSeason()">Continue</button>
+  <div class="season-bottom">
+    <div class="season-bottom-status" id="seasonBottomStatus"></div>
+    <div class="season-bottom-actions">
+      <button class="btn-season-secondary" id="btnSimAll" onclick="simulateAllSeason()">Sim rest of season</button>
+      <button class="btn-season-primary" id="btnSimWeek" onclick="simulateNextWeek()">▶ Play Week 1</button>
+      <button class="btn-season-continue" id="btnSeasonContinue" onclick="continueAfterRegularSeason()">Continue to Playoffs →</button>
+    </div>
   </div>
 </div>
 

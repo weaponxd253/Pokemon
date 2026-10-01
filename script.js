@@ -170,6 +170,7 @@ let faClaimState = null;      // { pokeId, dropId } while the claim pop-up is op
 let faToastTimer = null;
 let season = null;
 let selectedBattleLogs = { season: null, playoff: null };
+let seasonWeekOpen = {};   // weeks the player expanded/collapsed by hand, keyed `${draft}-${week}`
 let battlePlayback = { scope: null, gameId: null, stepIdx: 0, playing: false, timer: null };
 
 const SEASON_PHASES = {
@@ -3521,6 +3522,7 @@ function showFreeAgentScreen() {
 
   getWaiverOrder();
   setPhaseTracker('freeAgency');
+  hidePickAnnouncement();
   faContinueArmed = false;
   faAutoPass = new Set();
   closeFaClaim();
@@ -4277,6 +4279,8 @@ function continueAfterFreeAgents() {
   faAutoPass = new Set();
   closeFaClaim();
   closeFaHistory();
+  clearTimeout(faToastTimer);
+  document.getElementById('draftToast')?.classList.remove('visible', 'above-bar');
   faDropId = null;
   faNotice = '';
   faCpuThinking = false;
@@ -4327,39 +4331,41 @@ function renderBattleLogPanel(panelId, game, scope) {
   const winner = teams[game.winnerIdx];
   const events = game.battleLog ?? [];
   const sets = game.sets ?? [];
+  const winnerChance = game.winnerIdx === game.teamAIdx ? game.matchupScore?.chanceA : game.matchupScore?.chanceB;
+  const oddsText = Number.isFinite(winnerChance) ? ` · entered at ${Math.round(winnerChance * 100)}%` : '';
   panel.innerHTML = `
     <div class="battle-log-title">${teamA.name} ${game.scoreA} · ${teamB.name} ${game.scoreB}</div>
-    <div class="battle-log-sub">${winner.name} wins · ${sets.length || events.length} ${sets.length ? 'skirmishes' : 'events'} ${upsetTagHtml(game)}</div>
+    <div class="battle-log-sub">${winner.name} wins${sets.length ? ` in ${sets.length} skirmishes` : ''}${oddsText} ${upsetTagHtml(game)}</div>
     ${sets.length && scope ? `
       <div class="battle-log-actions">
-        <button class="btn-watch-battle" onclick="openBattlePlayback('${scope}', '${game.id}')">Watch Battle</button>
+        <button class="btn-watch-battle" onclick="openBattlePlayback('${scope}', '${game.id}')">▶ Watch Battle</button>
       </div>
     ` : ''}
     ${sets.length ? `
       <div class="battle-sets">
-        ${sets.map(set => {
-          return `
-            <div class="battle-set ${set.winnerIdx === game.teamAIdx ? 'team-a' : 'team-b'}">
-              <div class="battle-set-num">${set.setNumber}</div>
-              <div class="battle-set-matchup">
-                <span>${pokemonDisplayName({ name: set.pokemonAName })}</span>
-                <strong>vs</strong>
-                <span>${pokemonDisplayName({ name: set.pokemonBName })}</span>
-              </div>
-              <div class="battle-set-winner">${pokemonDisplayName({ name: set.winnerPokemonName })}</div>
+        ${sets.map(set => `
+          <div class="battle-set ${set.winnerIdx === game.teamAIdx ? 'team-a' : 'team-b'}">
+            <div class="battle-set-num">${set.setNumber}</div>
+            <div class="battle-set-matchup">
+              <span class="${set.winnerIdx === game.teamAIdx ? 'won' : ''}">${pokemonDisplayName({ name: set.pokemonAName })}</span>
+              <strong>vs</strong>
+              <span class="${set.winnerIdx === game.teamBIdx ? 'won' : ''}">${pokemonDisplayName({ name: set.pokemonBName })}</span>
             </div>
-          `;
-        }).join('')}
+            <div class="battle-set-winner"><i style="background:${teams[set.winnerIdx]?.color ?? '#888'}"></i>${teams[set.winnerIdx]?.name ?? ''}</div>
+            ${set.reason ? `<div class="battle-set-reason">${set.reason}</div>` : ''}
+          </div>
+        `).join('')}
       </div>
-    ` : ''}
-    <div class="battle-events">
-      ${events.map(event => `
-        <div class="battle-event ${event.kind} ${event.impact}">
-          <div class="battle-event-kind">${event.kind.replace(/-/g, ' ')}</div>
-          <div class="battle-event-text">${event.text}</div>
-        </div>
-      `).join('')}
-    </div>
+    ` : `
+      <div class="battle-events">
+        ${events.map(event => `
+          <div class="battle-event ${event.kind} ${event.impact}">
+            <div class="battle-event-kind">${event.kind.replace(/-/g, ' ')}</div>
+            <div class="battle-event-text">${event.text}</div>
+          </div>
+        `).join('')}
+      </div>
+    `}
   `;
 }
 
@@ -4586,6 +4592,7 @@ function showSeasonScreen() {
 
   const gen = GENS[currentGenIdx];
   setPhaseTracker('season');
+  hidePickAnnouncement();
   ensureActiveRosters();
   ensureRegularSeasonSchedule();
   syncSeason(SEASON_PHASES.REGULAR_SEASON, 'complete');
@@ -4595,12 +4602,46 @@ function showSeasonScreen() {
   document.getElementById('seasonTitle').textContent = `${gen.label} Regular Season`;
 }
 
+// "YOU" only makes sense when exactly one team is human.
+function soleHumanTeamIdx() {
+  const humans = teams.map((team, idx) => (team.isCpu ? null : idx)).filter(idx => idx !== null);
+  return humans.length === 1 ? humans[0] : null;
+}
+
+function youTagHtml(teamIdx) {
+  return teamIdx === soleHumanTeamIdx() ? '<span class="you-tag">You</span>' : '';
+}
+
+function teamInitials(team) {
+  const words = (team?.name ?? '').trim().split(/\s+/).filter(Boolean);
+  return (words.length > 1 ? words.map(w => w[0]).join('') : (words[0] ?? '?').slice(0, 3)).slice(0, 3).toUpperCase();
+}
+
+const EDGE_LABELS = {
+  rating: 'overall power', type: 'type matchups', speed: 'speed', bulk: 'bulk',
+  attack: 'attack power', mixedAttack: 'mixed attackers', diversity: 'type variety',
+};
+
+// Pre-game read: odds for each side and the biggest single edge.
+function gamePreview(game) {
+  const score = matchupScore(teams[game.teamAIdx], teams[game.teamBIdx]);
+  const [key, value] = Object.entries(score.components).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0] ?? [];
+  const edgeTeam = value > 0 ? teams[game.teamAIdx] : teams[game.teamBIdx];
+  return {
+    chanceA: score.chanceA,
+    chanceB: score.chanceB,
+    edge: key && Math.abs(value) > 0.05 ? `${edgeTeam.name} has the edge in ${EDGE_LABELS[key] ?? key}` : 'Too close to call',
+  };
+}
+
 function renderSeasonScreen() {
   const schedule = getCurrentDraftSchedule();
   const standings = buildRegularSeasonStandings(schedule);
   const simulated = schedule.filter(game => game.simulated).length;
   const nextWeek = schedule.find(game => !game.simulated)?.week;
+  const lastWeek = Math.max(0, ...schedule.map(game => game.week));
   const complete = isRegularSeasonComplete();
+  const youIdx = soleHumanTeamIdx();
 
   document.getElementById('seasonSub').textContent =
     `${simulated} of ${schedule.length} games complete${complete ? ' · season complete' : ` · week ${nextWeek} up next`}`;
@@ -4616,10 +4657,10 @@ function renderSeasonScreen() {
       <div class="season-rating" title="Team rating: active roster BST, type variety, speed and bulk">Rating</div>
     </div>
   ` + standings.map(entry => `
-    <div class="season-standing-row">
+    <div class="season-standing-row${entry.teamIdx === youIdx ? ' is-you' : ''}">
       <div class="season-rank">${entry.seed}</div>
       <div class="season-team-dot" style="background:${entry.color}"></div>
-      <div class="season-team-name">${entry.name} ${cpuBadgeHtml(entry, 'season-cpu-personality', { compact: true })}</div>
+      <div class="season-team-name">${entry.name} ${youTagHtml(entry.teamIdx)}${cpuBadgeHtml(entry, 'season-cpu-personality', { compact: true })}</div>
       <div class="season-record">${entry.wins}-${entry.losses}</div>
       <div class="season-stat" title="Sets won">${entry.pointsFor}</div>
       <div class="season-stat" title="Set difference">${entry.pointDiff > 0 ? '+' : ''}${entry.pointDiff}</div>
@@ -4629,42 +4670,140 @@ function renderSeasonScreen() {
 
   const weeks = [...new Set(schedule.map(game => game.week))];
   const selectedLogGame = getSelectedBattleLogGame('season');
+  const defaultOpenWeek = complete ? lastWeek : nextWeek;
   document.getElementById('seasonSchedule').innerHTML = weeks.map(week => {
     const games = schedule.filter(game => game.week === week);
+    const played = games.every(game => game.simulated);
+    const key = `${draftNumber}-${week}`;
+    const open = seasonWeekOpen[key] ?? week === defaultOpenWeek;
+    const summary = played
+      ? games.map(game => {
+          const a = teams[game.teamAIdx];
+          const b = teams[game.teamBIdx];
+          return `<span class="sw-result"><b class="${game.winnerIdx === game.teamAIdx ? 'w' : ''}">${teamInitials(a)}</b> ${game.scoreA}–${game.scoreB} <b class="${game.winnerIdx === game.teamBIdx ? 'w' : ''}">${teamInitials(b)}</b></span>`;
+        }).join('')
+      : `<span class="sw-upcoming">${week === nextWeek ? 'Up next' : 'Upcoming'}</span>`;
     return `
-      <div class="season-week">
-        <div class="season-week-title">Week ${week}</div>
+      <details class="season-week${played ? ' played' : ''}${week === nextWeek ? ' next' : ''}"${open ? ' open' : ''}>
+        <summary class="season-week-title" onclick="seasonWeekOpen['${key}'] = !this.parentElement.open"><span>Week ${week}${played ? ' ✓' : ''}</span>${summary}</summary>
         ${games.map(game => {
           const teamA = teams[game.teamAIdx];
           const teamB = teams[game.teamBIdx];
           const winnerA = game.winnerIdx === game.teamAIdx;
           const winnerB = game.winnerIdx === game.teamBIdx;
+          const preview = game.simulated ? null : gamePreview(game);
           const clickable = game.simulated ? ` onclick="selectBattleLog('season', '${game.id}')"` : '';
           const selected = selectedLogGame?.id === game.id ? ' selected' : '';
+          const mine = game.teamAIdx === youIdx || game.teamBIdx === youIdx ? ' mine' : '';
+          const pctA = preview ? Math.round(preview.chanceA * 100) : 0;
+          const cell = (side) => game.simulated
+            ? (side === 'A' ? game.scoreA : game.scoreB)
+            : `<span class="odds" title="Win chance">${side === 'A' ? pctA : 100 - pctA}%</span>`;
           return `
-            <div class="season-game${game.simulated ? ' simulated' : ''}${selected}"${clickable}>
+            <div class="season-game${game.simulated ? ' simulated' : ' upcoming'}${selected}${mine}"${clickable}${preview ? ` title="${preview.edge}"` : ''}>
               <div class="season-game-team${winnerA ? ' winner' : ''}">
                 <span class="season-team-dot" style="background:${teamA.color}"></span>
-                <span>${teamA.name}${winnerA ? ` ${upsetTagHtml(game)}` : ''}</span>
-                <strong>${game.simulated ? game.scoreA : '-'}</strong>
+                <span>${teamA.name}${youTagHtml(game.teamAIdx)}${winnerA ? ` ${upsetTagHtml(game)}` : ''}</span>
+                <strong>${cell('A')}</strong>
               </div>
               <div class="season-game-vs">vs</div>
               <div class="season-game-team${winnerB ? ' winner' : ''}">
                 <span class="season-team-dot" style="background:${teamB.color}"></span>
-                <span>${teamB.name}${winnerB ? ` ${upsetTagHtml(game)}` : ''}</span>
-                <strong>${game.simulated ? game.scoreB : '-'}</strong>
+                <span>${teamB.name}${youTagHtml(game.teamBIdx)}${winnerB ? ` ${upsetTagHtml(game)}` : ''}</span>
+                <strong>${cell('B')}</strong>
               </div>
             </div>
           `;
         }).join('')}
-      </div>
+      </details>
     `;
   }).join('');
   renderBattleLogPanel('seasonBattleLog', selectedLogGame, 'season');
+  renderSeasonNextGame(schedule, standings, nextWeek, complete);
+  renderSeasonLeaders(schedule);
 
-  document.getElementById('btnSimWeek').disabled = complete;
-  document.getElementById('btnSimAll').disabled = complete;
-  document.getElementById('btnSeasonContinue').disabled = !complete;
+  document.getElementById('seasonBottomStatus').textContent = complete
+    ? `Season complete · ${standings[0]?.name ?? ''} finished first`
+    : `Week ${nextWeek} of ${lastWeek} up next · ${simulated} of ${schedule.length} games played`;
+  const simWeekBtn = document.getElementById('btnSimWeek');
+  simWeekBtn.textContent = nextWeek ? `▶ Play Week ${nextWeek}` : '▶ Play Week';
+  simWeekBtn.hidden = complete;
+  document.getElementById('btnSimAll').hidden = complete;
+  const continueBtn = document.getElementById('btnSeasonContinue');
+  continueBtn.hidden = !complete;
+  continueBtn.disabled = !complete;
+}
+
+function renderSeasonNextGame(schedule, standings, nextWeek, complete) {
+  const el = document.getElementById('seasonNextGame');
+  if (!el) return;
+  const youIdx = soleHumanTeamIdx();
+
+  if (complete) {
+    const mine = youIdx !== null ? standings.find(s => s.teamIdx === youIdx) : null;
+    el.innerHTML = `
+      <div class="sng-label">Regular season complete</div>
+      <div class="sng-body">${mine
+        ? `${teams[youIdx].name} finished <strong>${mine.wins}-${mine.losses}</strong> as the <strong>#${mine.seed} seed</strong>.`
+        : `${standings[0]?.name ?? ''} finished first.`} Head to the playoffs when you're ready.</div>
+    `;
+    return;
+  }
+
+  const myGame = youIdx !== null
+    ? schedule.find(game => !game.simulated && (game.teamAIdx === youIdx || game.teamBIdx === youIdx))
+    : null;
+  const games = myGame ? [myGame] : schedule.filter(game => game.week === nextWeek && !game.simulated);
+  el.innerHTML = `
+    <div class="sng-label">${myGame ? `Your next game · Week ${myGame.week}` : `Week ${nextWeek} preview`}</div>
+    ${games.map(game => {
+      const preview = gamePreview(game);
+      const a = teams[game.teamAIdx];
+      const b = teams[game.teamBIdx];
+      const pa = Math.round(preview.chanceA * 100);
+      return `
+        <div class="sng-game">
+          <div class="sng-teams">
+            <span><i style="background:${a.color}"></i>${a.name}${youTagHtml(game.teamAIdx)}</span>
+            <span class="sng-vs">vs</span>
+            <span><i style="background:${b.color}"></i>${b.name}${youTagHtml(game.teamBIdx)}</span>
+          </div>
+          <div class="sng-odds" aria-label="${a.name} ${pa}%, ${b.name} ${100 - pa}%">
+            <b style="width:${pa}%;background:${a.color}">${pa}%</b><b style="width:${100 - pa}%;background:${b.color}">${100 - pa}%</b>
+          </div>
+          <div class="sng-edge">${preview.edge}</div>
+        </div>
+      `;
+    }).join('')}
+  `;
+}
+
+// MVP race: Pokémon with the most skirmish wins this regular season.
+function renderSeasonLeaders(schedule) {
+  const el = document.getElementById('seasonLeaders');
+  if (!el) return;
+  const tally = new Map();
+  schedule.forEach(game => (game.sets ?? []).forEach(set => {
+    const entry = tally.get(set.winnerPokemonId) ?? { id: set.winnerPokemonId, name: set.winnerPokemonName, teamIdx: set.winnerIdx, wins: 0 };
+    entry.wins++;
+    tally.set(set.winnerPokemonId, entry);
+  }));
+  const leaders = [...tally.values()].sort((a, b) => b.wins - a.wins || a.name.localeCompare(b.name)).slice(0, 5);
+  el.innerHTML = `
+    <div class="season-section-lbl">League Leaders · skirmish wins</div>
+    ${leaders.length ? `<div class="sl-list">${leaders.map((entry, idx) => {
+      const team = teams[entry.teamIdx];
+      const poke = team?.picks.find(p => p.id === entry.id);
+      return `
+        <div class="sl-row">
+          <span class="sl-rank">${idx + 1}</span>
+          <img src="${poke?.sprite ?? pokemonSpriteUrl(entry.id)}" alt="" onerror="this.style.visibility='hidden'">
+          <span class="sl-name">${pokemonDisplayName({ name: entry.name })}</span>
+          <span class="sl-team"><i style="background:${team?.color ?? '#888'}"></i>${team?.name ?? ''}${youTagHtml(entry.teamIdx)}</span>
+          <strong>${entry.wins}</strong>
+        </div>`;
+    }).join('')}</div>` : '<div class="sl-empty">Play a week to start the MVP race.</div>'}
+  `;
 }
 
 function simulateNextWeek() {
@@ -4686,11 +4825,6 @@ function simulateAllSeason() {
   syncRegularSeasonResults();
   renderSeasonScreen();
   saveSeason(buildSeasonState(SEASON_PHASES.REGULAR_SEASON, 'complete'));
-}
-
-function simToPlayoffs() {
-  if (!isRegularSeasonComplete()) simulateAllSeason();
-  continueAfterRegularSeason();
 }
 
 function continueAfterRegularSeason() {
