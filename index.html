@@ -86,6 +86,13 @@
         <option value="instant">Instant — skip the wait</option>
       </select>
     </div>
+    <div class="form-group">
+      <label class="form-label" for="setupManagerMode">Your Games</label>
+      <select id="setupManagerMode" onchange="setManagerMode(this.value === 'manager')">
+        <option value="manager">Manager mode — pick each fighter and a game plan</option>
+        <option value="auto">Auto-sim — just watch the results</option>
+      </select>
+    </div>
     <button class="btn-primary" onclick="startDraft()">▶ &nbsp;START DRAFT</button>
     <button class="btn-quick-start" onclick="quickStart()">⚡ Quick Start — You vs 3 CPUs</button>
     <div class="setup-remembered" id="setupRemembered"></div>
@@ -316,7 +323,9 @@
   <div class="season-bottom">
     <div class="season-bottom-status" id="seasonBottomStatus"></div>
     <div class="season-bottom-actions">
-      <button class="btn-season-secondary" id="btnSimAll" onclick="simulateAllSeason()">Sim rest of season</button>
+      <label class="mgr-toggle" title="Pick your fighter and game plan in your own games"><input type="checkbox" class="manager-toggle" onchange="setManagerMode(this.checked)"> 🎮 Play my games</label>
+      <button class="btn-season-secondary btn-lineup" onclick="openLineupModal()">Lineup &amp; scouting</button>
+      <button class="btn-season-secondary" id="btnSimAll" onclick="simulateAllSeason()" title="Auto-sims every remaining game, including yours">Sim rest of season</button>
       <button class="btn-season-primary" id="btnSimWeek" onclick="simulateNextWeek()">▶ Play Week 1</button>
       <button class="btn-season-continue" id="btnSeasonContinue" onclick="continueAfterRegularSeason()">Continue to Playoffs →</button>
     </div>
@@ -345,7 +354,9 @@
   </div>
 
   <div class="playoff-actions">
-    <button class="btn-playoff-primary" id="btnSimPlayoffRound" onclick="simulateNextPlayoffRound()">Simulate Round</button>
+    <label class="mgr-toggle" title="Pick your fighter and game plan in your own games"><input type="checkbox" class="manager-toggle" onchange="setManagerMode(this.checked)"> 🎮 Play my games</label>
+    <button class="btn-playoff-secondary btn-lineup" onclick="openLineupModal()">Lineup &amp; scouting</button>
+    <button class="btn-playoff-primary" id="btnSimPlayoffRound" onclick="simulateNextPlayoffRound()">Play Round</button>
     <button class="btn-playoff-secondary" id="btnSimPlayoffsAll" onclick="simulateAllPlayoffs()">Simulate All</button>
     <button class="btn-playoff-continue" id="btnPlayoffContinue" onclick="continueAfterPlayoffs()">Continue</button>
   </div>
@@ -371,6 +382,16 @@
       <button class="btn-battle-control" id="btnBattleNext" onclick="nextBattleStep()" title="Next (→)">Next ▶</button>
     </div>
   </div>
+</div>
+
+<!-- ══════════════ MATCH (manager mode) ══════════════ -->
+<div id="matchOverlay">
+  <div class="match-modal" id="matchModal" role="dialog" aria-modal="true" aria-labelledby="matchTitle"></div>
+</div>
+
+<!-- ══════════════ LINEUP & SCOUTING ══════════════ -->
+<div class="dc-overlay lineup-overlay" id="lineupOverlay" onclick="if (event.target === this) closeLineupModal()">
+  <div class="dc-modal lineup-modal" id="lineupModal" role="dialog" aria-modal="true" aria-labelledby="lineupTitle"></div>
 </div>
 
 <!-- ══════════════ LOBBY ══════════════ -->
